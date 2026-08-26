@@ -1,126 +1,63 @@
-# ESP32 Smart Energy Monitor
+# ⚡ ESP32 Smart Energy Monitor
 
-Real-time, non-invasive AC energy monitoring system built on the ESP32, using FreeRTOS to run sensor acquisition and cloud communication as separate concurrent tasks.
+Real-time energy monitoring system built on the ESP32, using FreeRTOS to track voltage, current, and power draw and stream it to a live dashboard.
+
+![C++](https://img.shields.io/badge/C++-00599C?style=flat-square&logo=cplusplus&logoColor=white)
+![ESP32](https://img.shields.io/badge/ESP32-E7352C?style=flat-square&logo=espressif&logoColor=white)
+![FreeRTOS](https://img.shields.io/badge/FreeRTOS-00979D?style=flat-square&logo=freertos&logoColor=white)
+![Status](https://img.shields.io/badge/status-active-brightgreen?style=flat-square)
 
 ## Overview
 
-A low-cost, real-time IoT energy monitoring system that tracks voltage, current, active power, and cumulative energy consumption on a single AC load. The ESP32 handles sensor polling and cloud communication concurrently using FreeRTOS, pushing live data to a Blynk dashboard and triggering local + push-notification alerts on excessive usage.
+This project uses a PZEM-004T energy sensor to measure voltage, current, and power in real time, with the ESP32 running FreeRTOS tasks to handle sensor polling, local display, and data transfer independently.
+
+**v1 (current, stable):** Data pushed to the Blynk app for live remote monitoring.
+**v2 (in progress):** Migrating telemetry from Blynk to MQTT (HiveMQ Cloud) for more flexible, self-hosted dashboards — Phase 1 (Wi-Fi, TLS handshake, MQTT auth, LWT status, sensor data topic) is verified end-to-end on hardware; Phase 2 adds CT-clamp based anomaly detection.
 
 ## Features
 
-- **Dual-core task split (FreeRTOS):** sensor polling and cloud/Wi-Fi communication run as independent tasks on separate cores, so a slow network call never blocks a measurement cycle.
-- **Non-invasive AC sensing:** PZEM-004T v3.0 module with a CT coil — no direct contact with mains conductors required for current sensing.
-- **Local display:** live voltage/current/power on a 16x2 I2C LCD.
-- **Threshold alerts:** LED indication + Blynk push notification when consumption exceeds a configurable daily/monthly threshold.
-
-## System Architecture
-
-```
-                AC LOAD
-                   │
-                   ▼
-             PZEM-004T v3.0
-           (voltage, current,
-            power via CT coil)
-                   │ UART (RX2/TX2)
-                   ▼
-                 ESP32
-                   │
-        ┌──────────┴──────────┐
-        │     FreeRTOS         │
-        │                       │
-   Core 1: Measurement    Core 0: Wi-Fi / Blynk
-   - Poll PZEM over UART   - Maintain Wi-Fi connection
-   - Update LCD            - Push V/I/P/E to Blynk
-   - Threshold check        - Send alert notification
-        │                       │
-        ▼                       ▼
-   LED indicator          Blynk Cloud Dashboard
-   (local alert)          (remote monitoring)
-```
+- Real-time voltage, current, and power monitoring via PZEM-004T
+- FreeRTOS task/queue architecture for concurrent sensor polling and I/O
+- On-device LCD display with status LEDs
+- Remote monitoring via Blynk (v1) / MQTT + cloud broker (v2)
 
 ## Hardware
 
-| Component | Role |
+| Component | Purpose |
 |---|---|
-| ESP32 Dev Module | Main controller (Wi-Fi + dual-core) |
-| PZEM-004T v3.0 | AC voltage/current/power sensing (UART) |
-| CT coil (PZEM-004T) | Non-invasive current sensing on the live wire |
-| 16x2 I2C LCD | Local readout |
-| Green/Red LEDs | Normal / alert indication |
-| 5V supply (USB or Hi-Link AC-DC) | Power for ESP32 + peripherals |
+| ESP32 | Main microcontroller |
+| PZEM-004T | Voltage/current/power sensing |
+| 16x2 LCD | Local readout |
+| Status LEDs | Visual alerts |
 
-**Hardware photo:**
-![Hardware setup](assets/hardware.jpg)
+<!-- TODO: add a wiring diagram or photo of the physical setup here -->
 
-## Circuit / Wiring
+## Software Stack
 
-**PZEM-004T → ESP32:**
+- Arduino framework (ESP32)
+- FreeRTOS (tasks + queues)
+- PubSubClient (MQTT) + ArduinoJson *(v2)*
+- Blynk library *(v1)*
 
-| PZEM Pin | ESP32 Pin |
-|---|---|
-| VCC | 5V (VIN) |
-| GND | GND |
-| RX | GPIO 17 (TX2) |
-| TX | GPIO 16 (RX2) |
+## Getting Started
 
-![Circuit diagram](assets/circuit-diagram.png)
-
-**⚠️ HIGH VOLTAGE WARNING**
-This project interfaces with 220V AC mains. Only the Live (Phase) wire of the monitored load passes through the CT coil; the PZEM's AC voltage screw terminals connect directly to Live and Neutral. Do not touch any part of the circuit while it is connected to mains. Double-check all wiring before powering on. If you're not confident working with mains voltage, don't build this — use a mains-isolated dev setup or consult someone qualified.
-
-## Firmware Architecture
-
-Two FreeRTOS tasks run independently:
-
-- **`measurementTask` (Core 1):** polls the PZEM-004T over UART on a fixed interval, updates the LCD, checks the reading against the configured threshold, and drives the LED.
-- **`networkTask` (Core 0):** maintains the Wi-Fi connection, pushes V/I/P/E readings to Blynk virtual pins, and sends a push notification (via Blynk → WhatsApp integration) when a threshold is crossed.
-
-Tasks communicate via a shared, mutex-protected struct holding the latest sensor readings, so the network task always sends the most recent value without blocking the measurement task.
-
-## FreeRTOS Implementation
-
-```cpp
-// Illustrative — replace with your actual task signatures from main.ino
-xTaskCreatePinnedToCore(measurementTask, "Measurement", 4096, NULL, 1, NULL, 1); // Core 1
-xTaskCreatePinnedToCore(networkTask,     "Network",     4096, NULL, 1, NULL, 0); // Core 0
+```bash
+git clone https://github.com/yash-mehta13/ESP32-Smart-Energy-Monitor.git
 ```
 
-This split exists because Blynk's Wi-Fi calls are blocking and can stall for hundreds of milliseconds on a weak connection — pinning them to Core 0 keeps sensor polling on Core 1 running on schedule regardless of network conditions.
+1. Open the project in Arduino IDE / PlatformIO
+2. Install dependencies: `PubSubClient`, `ArduinoJson`, `Blynk` (for v1)
+3. Add your Wi-Fi credentials and Blynk/MQTT broker details in `config.h`
+4. Wire the PZEM-004T to the ESP32 as shown in the wiring diagram
+5. Flash and monitor via Serial
 
-## Data Flow
+## Roadmap
 
-1. PZEM-004T measures voltage, current, and active power on the CT-sensed line.
-2. ESP32 polls PZEM over UART on a fixed cycle.
-3. `measurementTask` updates the LCD and evaluates the alert threshold.
-4. `networkTask` pushes the latest readings to Blynk virtual pins (V0–V3).
-5. On threshold breach: LED turns red, Blynk sends a push/WhatsApp notification.
+- [x] v1: Blynk-based real-time dashboard
+- [x] v2 Phase 1: MQTT/TLS pipeline verified on hardware
+- [ ] v2 Phase 2: CT-clamp calibration + anomaly detection
+- [ ] Historical data logging / cloud storage
 
-## Dashboard
+## License
 
-![Blynk dashboard](assets/blynk-dashboard.png)
-
-## Results
-
-*(Add real captured data here — this section is currently empty in the write-up and should not be, since it's the easiest way to prove the system actually works. Include, e.g.: a table of measured vs. a reference meter's readings for a known load, a short accuracy note, and/or a screenshot of the LCD mid-measurement.)*
-
-## Safety Considerations
-
-- All mains-side connections are made through the PZEM-004T's isolated terminals; the ESP32 and logic-side wiring never contact mains directly.
-- Only the Live conductor passes through the CT coil — never both Live and Neutral together.
-- Circuit is built and tested with the load de-energized; power is applied only after all connections are verified.
-
-## Limitations
-
-- Wi-Fi credentials and Blynk auth token are currently hardcoded in the source and must be edited before flashing — no runtime configuration (e.g. via captive portal).
-- No persistent local storage (SD card / NVS) — historical data lives only in Blynk's retention window.
-- Single-load monitoring only; no support for monitoring multiple circuits from one unit.
-- No calibration routine — accuracy depends entirely on the PZEM-004T's factory calibration.
-
-## Future Improvements
-
-- Move Wi-Fi/Blynk credentials to a captive-portal setup (e.g. WiFiManager) instead of hardcoding.
-- Add local logging (SD card or ESP32 NVS) so history survives a Blynk outage or account change.
-- Add OTA firmware updates.
-- Support multiple PZEM-004T units for multi-circuit monitoring.
-- Add a calibration/verification step against a known-good reference meter, with results published in this README.
+<!-- TODO: pick a license, e.g. MIT — add a LICENSE file to the repo root -->
