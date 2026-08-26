@@ -2,16 +2,6 @@
 
 Real-time, non-invasive AC energy monitoring system built on the ESP32, using FreeRTOS to run sensor acquisition and cloud communication as separate concurrent tasks.
 
-> **Before pushing:** create an `assets/` folder in the repo root and move your existing images into it with these names (rename as you move):
-> - `Circuit Design1.jpeg` → `assets/circuit-diagram.png` (or keep .jpeg, just rename)
-> - `Circuit Design 2.jpeg` → `assets/hardware.jpg`
-> - `LCD display.jpeg` → `assets/lcd-display.jpg`
-> - `BlynkIoT output.jpeg` → `assets/blynk-dashboard.png`
-> - Keep whichever `Screenshot ....png` files are actually useful (e.g. Blynk web dashboard) and rename them descriptively; delete the rest — a repo root full of `Screenshot 2026-04-06 144714.png` files looks unmanaged.
-> Then the `![...]()` links below will render correctly.
-
----
-
 ## Overview
 
 A low-cost, real-time IoT energy monitoring system that tracks voltage, current, active power, and cumulative energy consumption on a single AC load. The ESP32 handles sensor polling and cloud communication concurrently using FreeRTOS, pushing live data to a Blynk dashboard and triggering local + push-notification alerts on excessive usage.
