@@ -1,63 +1,146 @@
-# ⚡ ESP32 Smart Energy Monitor
+# ESP32 Real-Time Energy Controller
 
-Real-time energy monitoring system built on the ESP32, using FreeRTOS to track voltage, current, and power draw and stream it to a live dashboard.
+FreeRTOS-based embedded energy monitoring and control firmware built on the ESP32.
 
-![C++](https://img.shields.io/badge/C++-00599C?style=flat-square&logo=cplusplus&logoColor=white)
-![ESP32](https://img.shields.io/badge/ESP32-E7352C?style=flat-square&logo=espressif&logoColor=white)
-![FreeRTOS](https://img.shields.io/badge/FreeRTOS-00979D?style=flat-square&logo=freertos&logoColor=white)
-![Status](https://img.shields.io/badge/status-active-brightgreen?style=flat-square)
+The project is being developed as an industrial-style embedded firmware system with a focus on **real-time task scheduling, sensor acquisition, inter-task communication, system monitoring, fault handling, and reliable control architecture**.
 
-## Overview
+## Current Features
 
-This project uses a PZEM-004T energy sensor to measure voltage, current, and power in real time, with the ESP32 running FreeRTOS tasks to handle sensor polling, local display, and data transfer independently.
+* ESP32-based embedded firmware
+* FreeRTOS task architecture
+* PZEM-004T energy measurement
+* UART communication
+* 16x2 I2C LCD
+* Blynk cloud telemetry
+* Real-time measurement processing
+* Mutex-protected shared measurement data
+* FreeRTOS queue-based inter-task communication
+* Basic system-state management
 
-**v1 (current, stable):** Data pushed to the Blynk app for live remote monitoring.
-**v2 (in progress):** Migrating telemetry from Blynk to MQTT (HiveMQ Cloud) for more flexible, self-hosted dashboards — Phase 1 (Wi-Fi, TLS handshake, MQTT auth, LWT status, sensor data topic) is verified end-to-end on hardware; Phase 2 adds CT-clamp based anomaly detection.
+## System Architecture
 
-## Features
-
-- Real-time voltage, current, and power monitoring via PZEM-004T
-- FreeRTOS task/queue architecture for concurrent sensor polling and I/O
-- On-device LCD display with status LEDs
-- Remote monitoring via Blynk (v1) / MQTT + cloud broker (v2)
+```text
+                         ESP32
+                           |
+          +----------------+----------------+
+          |                |                |
+          v                v                v
+     SensorTask       ControlTask      NetworkTask
+       Core 1           Core 1            Core 0
+          |                |                |
+          |                |                +----> Blynk
+          |                |
+          v                v
+    Measurement ----> Control Logic
+          |
+          v
+   Latest Measurement
+          |
+          v
+     DisplayTask
+          |
+          v
+        I2C LCD
+```
 
 ## Hardware
 
-| Component | Purpose |
-|---|---|
-| ESP32 | Main microcontroller |
-| PZEM-004T | Voltage/current/power sensing |
-| 16x2 LCD | Local readout |
-| Status LEDs | Visual alerts |
+| Component    | Interface | Purpose                  |
+| ------------ | --------- | ------------------------ |
+| ESP32        | —         | Main microcontroller     |
+| PZEM-004T v3 | UART      | Electrical measurements  |
+| 16x2 LCD     | I2C       | Local monitoring         |
+| Green LED    | GPIO      | Normal status            |
+| Red LED      | GPIO      | Warning/fault indication |
 
-<!-- TODO: add a wiring diagram or photo of the physical setup here -->
+## Firmware Tasks
 
-## Software Stack
+| Task        | Function                       | Period | Priority |   Core |
+| ----------- | ------------------------------ | -----: | -------: | -----: |
+| SensorTask  | Sensor acquisition             |    1 s |        3 | Core 1 |
+| ControlTask | Measurement processing/control | 100 ms |        4 | Core 1 |
+| DisplayTask | LCD update                     | 500 ms |        1 | Core 1 |
+| NetworkTask | Cloud communication            |  10 ms |        2 | Core 0 |
 
-- Arduino framework (ESP32)
-- FreeRTOS (tasks + queues)
-- PubSubClient (MQTT) + ArduinoJson *(v2)*
-- Blynk library *(v1)*
+## Inter-Task Communication
 
-## Getting Started
+The firmware uses a FreeRTOS queue to transfer measurement data from the sensor task to the control task.
 
-```bash
-git clone https://github.com/yash-mehta13/ESP32-Smart-Energy-Monitor.git
+```text
+PZEM-004T
+    |
+    v
+SensorTask
+    |
+    v
+FreeRTOS Queue
+    |
+    v
+ControlTask
 ```
 
-1. Open the project in Arduino IDE / PlatformIO
-2. Install dependencies: `PubSubClient`, `ArduinoJson`, `Blynk` (for v1)
-3. Add your Wi-Fi credentials and Blynk/MQTT broker details in `config.h`
-4. Wire the PZEM-004T to the ESP32 as shown in the wiring diagram
-5. Flash and monitor via Serial
+A mutex protects the latest measurement snapshot accessed by other tasks.
 
-## Roadmap
+```text
+SensorTask
+    |
+    v
+Latest Measurement
+    |
+    +------> DisplayTask
+    |
+    +------> NetworkTask
+```
 
-- [x] v1: Blynk-based real-time dashboard
-- [x] v2 Phase 1: MQTT/TLS pipeline verified on hardware
-- [ ] v2 Phase 2: CT-clamp calibration + anomaly detection
-- [ ] Historical data logging / cloud storage
+## Measurement Data
 
-## License
+The firmware maintains the following measurement parameters:
 
-<!-- TODO: pick a license, e.g. MIT — add a LICENSE file to the repo root -->
+* Voltage
+* Current
+* Real Power
+* Energy
+* Apparent Power
+* Power Factor
+* Measurement validity
+* Timestamp
+
+## Development Status
+
+### Completed
+
+* [x] ESP32 hardware initialization
+* [x] PZEM-004T UART communication
+* [x] FreeRTOS task architecture
+* [x] Measurement structure
+* [x] FreeRTOS measurement queue
+* [x] Mutex-protected measurement snapshot
+* [x] LCD monitoring
+* [x] Blynk telemetry
+* [x] Basic system-state evaluation
+
+### Upcoming
+
+* [ ] Protection state machine
+* [ ] Fault persistence and debounce
+* [ ] Fault manager
+* [ ] Watchdog supervision
+* [ ] UART diagnostic interface
+* [ ] MQTT telemetry
+* [ ] Relay/load disconnect
+* [ ] Fault-injection testing
+* [ ] Long-duration validation
+
+## Documentation
+
+* [Firmware Architecture](docs/architecture.md)
+
+## Development Approach
+
+The project is being developed incrementally. Each major firmware feature is implemented, tested on physical hardware, documented, and committed to the repository before moving to the next stage.
+
+## Author
+
+**Yash Mehta**
+Electronics & Communication Engineering
+VIT Vellore
