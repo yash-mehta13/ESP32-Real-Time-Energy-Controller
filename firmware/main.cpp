@@ -1,10 +1,6 @@
 #define BLYNK_PRINT Serial
 
-// =====================================================
-//                  BLYNK CONFIGURATION
-// =====================================================
-
-#define BLYNK_TEMPLATE_ID "YOUR_TEMPLATE_ID"
+#define BLYNK_TEMPLATE_ID "YOUR_BLYNK_TEMPLATE_ID"
 #define BLYNK_TEMPLATE_NAME "Energy Monitor"
 #define BLYNK_AUTH_TOKEN "YOUR_BLYNK_AUTH_TOKEN"
 
@@ -13,8 +9,12 @@
 #include <PZEM004Tv30.h>
 #include <LiquidCrystal_I2C.h>
 
-char auth[] = BLYNK_AUTH_TOKEN;
-char ssid[] = "YOUR_WIFI_NAME";
+// =====================================================
+//                  NETWORK CREDENTIALS
+// =====================================================
+
+char auth[] = "YOUR_BLYNK_AUTH_TOKEN";
+char ssid[] = "YOUR_WIFI_SSID";
 char pass[] = "YOUR_WIFI_PASSWORD";
 
 // =====================================================
@@ -40,7 +40,7 @@ const float POWER_THRESHOLD_W = 485.0f;
 
 const unsigned long SENSOR_PERIOD_MS    = 1000;
 const unsigned long CONTROL_PERIOD_MS   = 100;
-const unsigned long DISPLAY_PERIOD_MS    = 500;
+const unsigned long DISPLAY_PERIOD_MS   = 500;
 const unsigned long TELEMETRY_PERIOD_MS = 2000;
 
 // =====================================================
@@ -49,23 +49,30 @@ const unsigned long TELEMETRY_PERIOD_MS = 2000;
 
 struct Measurement
 {
-    float voltage;
-    float current;
-    float power;
-    float energy;
-
-    bool valid;
-
-    uint32_t timestamp;
+    float voltage;          // RMS Voltage (V)
+    float current;          // RMS Current (A)
+    float power;            // Real Power (W)
+    float energy;           // Energy (kWh)
+    float apparentPower;    // Apparent Power (VA)
+    float powerFactor;      // Power Factor
+    bool valid;             // Measurement validity
+    unsigned long timestamp;
 };
 
-Measurement latestMeasurement = {
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    false,
-    0
+// =====================================================
+//              LATEST MEASUREMENT SNAPSHOT
+// =====================================================
+
+Measurement latestMeasurement =
+{
+    0.0f,       // voltage
+    0.0f,       // current
+    0.0f,       // power
+    0.0f,       // energy
+    0.0f,       // apparentPower
+    0.0f,       // powerFactor
+    false,      // valid
+    0           // timestamp
 };
 
 // =====================================================
@@ -86,7 +93,15 @@ SystemState systemState = SYSTEM_INIT;
 //                    RTOS OBJECTS
 // =====================================================
 
+// Mutex protecting latestMeasurement
 SemaphoreHandle_t measurementMutex;
+
+// SensorTask -> ControlTask
+QueueHandle_t measurementQueue;
+
+// =====================================================
+//                    TASK HANDLES
+// =====================================================
 
 TaskHandle_t sensorTaskHandle;
 TaskHandle_t controlTaskHandle;
@@ -121,18 +136,77 @@ void sensorTask(void *parameter)
     {
         Measurement reading;
 
+        // -------------------------------------------------
+        // Read PZEM measurements
+        // -------------------------------------------------
+
         reading.voltage = pzem.voltage();
         reading.current = pzem.current();
         reading.power   = pzem.power();
         reading.energy  = pzem.energy();
 
+        // -------------------------------------------------
+        // Calculate Apparent Power
+        //
+        // S = V × I
+        // -------------------------------------------------
+
+        if (!isnan(reading.voltage) &&
+            !isnan(reading.current) &&
+            reading.voltage > 0.0f &&
+            reading.current >= 0.0f)
+        {
+            reading.apparentPower =
+                reading.voltage * reading.current;
+        }
+        else
+        {
+            reading.apparentPower = 0.0f;
+        }
+
+        // -------------------------------------------------
+        // Calculate Power Factor
+        //
+        // PF = P / S
+        //
+        // P = Real Power
+        // S = Apparent Power
+        // -------------------------------------------------
+
+        if (!isnan(reading.power) &&
+            reading.apparentPower > 0.0f)
+        {
+            reading.powerFactor =
+                reading.power / reading.apparentPower;
+
+            // Prevent impossible numerical values
+            if (reading.powerFactor < 0.0f)
+            {
+                reading.powerFactor = 0.0f;
+            }
+
+            if (reading.powerFactor > 1.0f)
+            {
+                reading.powerFactor = 1.0f;
+            }
+        }
+        else
+        {
+            reading.powerFactor = 0.0f;
+        }
+
         reading.timestamp = millis();
 
-        // Validate complete PZEM reading
+        // -------------------------------------------------
+        // Validate complete measurement
+        // -------------------------------------------------
+
         if (isnan(reading.voltage) ||
             isnan(reading.current) ||
             isnan(reading.power) ||
-            isnan(reading.energy))
+            isnan(reading.energy) ||
+            isnan(reading.apparentPower) ||
+            isnan(reading.powerFactor))
         {
             reading.valid = false;
         }
@@ -141,15 +215,38 @@ void sensorTask(void *parameter)
             reading.valid = true;
         }
 
-        // Store latest measurement
+        // -------------------------------------------------
+        // Send measurement to ControlTask
+        // -------------------------------------------------
+
+        if (xQueueSend(
+                measurementQueue,
+                &reading,
+                pdMS_TO_TICKS(50)
+            ) != pdPASS)
+        {
+            Serial.println(
+                "[SensorTask] WARNING: Measurement queue full"
+            );
+        }
+
+        // -------------------------------------------------
+        // Update latest measurement snapshot
+        // -------------------------------------------------
+
         if (xSemaphoreTake(
                 measurementMutex,
-                pdMS_TO_TICKS(50)) == pdTRUE)
+                pdMS_TO_TICKS(50)
+            ) == pdTRUE)
         {
             latestMeasurement = reading;
 
             xSemaphoreGive(measurementMutex);
         }
+
+        // -------------------------------------------------
+        // Periodic execution
+        // -------------------------------------------------
 
         vTaskDelayUntil(
             &lastWakeTime,
@@ -168,21 +265,70 @@ void controlTask(void *parameter)
 
     TickType_t lastWakeTime = xTaskGetTickCount();
 
+    // Local measurement
+    Measurement measurement =
+    {
+        0.0f,       // voltage
+        0.0f,       // current
+        0.0f,       // power
+        0.0f,       // energy
+        0.0f,       // apparentPower
+        0.0f,       // powerFactor
+        false,      // valid
+        0           // timestamp
+    };
+
     for (;;)
     {
-        Measurement measurement;
+        Measurement newMeasurement;
 
-        if (xSemaphoreTake(
-                measurementMutex,
-                pdMS_TO_TICKS(50)) == pdTRUE)
+        // -------------------------------------------------
+        // Receive fresh measurement
+        // -------------------------------------------------
+
+        if (xQueueReceive(
+                measurementQueue,
+                &newMeasurement,
+                0
+            ) == pdPASS)
         {
-            measurement = latestMeasurement;
+            measurement = newMeasurement;
 
-            xSemaphoreGive(measurementMutex);
+            // -------------------------------------------------
+            // Diagnostic output
+            // -------------------------------------------------
+
+            Serial.printf(
+                "[ControlTask] "
+                "V=%.1fV | "
+                "I=%.2fA | "
+                "P=%.1fW | "
+                "S=%.1fVA | "
+                "PF=%.3f | "
+                "E=%.3fkWh | "
+                "Valid=%d\n",
+
+                measurement.voltage,
+                measurement.current,
+                measurement.power,
+                measurement.apparentPower,
+                measurement.powerFactor,
+                measurement.energy,
+                measurement.valid
+            );
+
+            // -------------------------------------------------
+            // Run control logic
+            // -------------------------------------------------
+
+            updateSystemState(measurement);
+
+            updateIndicators(systemState);
         }
 
-        updateSystemState(measurement);
-        updateIndicators(systemState);
+        // -------------------------------------------------
+        // Periodic execution
+        // -------------------------------------------------
 
         vTaskDelayUntil(
             &lastWakeTime,
@@ -203,16 +349,35 @@ void displayTask(void *parameter)
 
     for (;;)
     {
-        Measurement measurement;
+        Measurement measurement =
+        {
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            false,
+            0
+        };
+
+        // -------------------------------------------------
+        // Read latest measurement
+        // -------------------------------------------------
 
         if (xSemaphoreTake(
                 measurementMutex,
-                pdMS_TO_TICKS(50)) == pdTRUE)
+                pdMS_TO_TICKS(50)
+            ) == pdTRUE)
         {
             measurement = latestMeasurement;
 
             xSemaphoreGive(measurementMutex);
         }
+
+        // -------------------------------------------------
+        // LCD display
+        // -------------------------------------------------
 
         lcd.clear();
 
@@ -227,6 +392,7 @@ void displayTask(void *parameter)
         else
         {
             lcd.setCursor(0, 0);
+
             lcd.printf(
                 "V:%.1f I:%.2f",
                 measurement.voltage,
@@ -234,12 +400,17 @@ void displayTask(void *parameter)
             );
 
             lcd.setCursor(0, 1);
+
             lcd.printf(
                 "P:%.1fW E:%.2f",
                 measurement.power,
                 measurement.energy
             );
         }
+
+        // -------------------------------------------------
+        // Periodic execution
+        // -------------------------------------------------
 
         vTaskDelayUntil(
             &lastWakeTime,
@@ -261,26 +432,38 @@ void networkTask(void *parameter)
     for (;;)
     {
         // -------------------------------------------------
-        // Blynk must be serviced frequently
+        // Service Blynk frequently
         // -------------------------------------------------
 
         Blynk.run();
 
-        // -------------------------------------------------
-        // Telemetry interval
-        // -------------------------------------------------
-
         unsigned long now = millis();
 
-        if (now - lastTelemetryTime >= TELEMETRY_PERIOD_MS)
+        // -------------------------------------------------
+        // Send telemetry every 2 seconds
+        // -------------------------------------------------
+
+        if (now - lastTelemetryTime >=
+            TELEMETRY_PERIOD_MS)
         {
             lastTelemetryTime = now;
 
-            Measurement measurement;
+            Measurement measurement =
+            {
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                false,
+                0
+            };
 
             if (xSemaphoreTake(
                     measurementMutex,
-                    pdMS_TO_TICKS(50)) == pdTRUE)
+                    pdMS_TO_TICKS(50)
+                ) == pdTRUE)
             {
                 measurement = latestMeasurement;
 
@@ -289,30 +472,51 @@ void networkTask(void *parameter)
 
             if (measurement.valid)
             {
+                // Voltage
                 Blynk.virtualWrite(
                     V0,
                     measurement.voltage
                 );
 
+                // Current
                 Blynk.virtualWrite(
                     V1,
                     measurement.current
                 );
 
+                // Real Power
                 Blynk.virtualWrite(
                     V2,
                     measurement.power
                 );
 
+                // Energy
                 Blynk.virtualWrite(
                     V3,
                     measurement.energy
                 );
+
+                // Apparent Power
+                Blynk.virtualWrite(
+                    V4,
+                    measurement.apparentPower
+                );
+
+                // Power Factor
+                Blynk.virtualWrite(
+                    V5,
+                    measurement.powerFactor
+                );
             }
         }
 
-        // Run approximately every 10 ms
-        vTaskDelay(pdMS_TO_TICKS(10));
+        // -------------------------------------------------
+        // Blynk service interval
+        // -------------------------------------------------
+
+        vTaskDelay(
+            pdMS_TO_TICKS(10)
+        );
     }
 }
 
@@ -320,28 +524,52 @@ void networkTask(void *parameter)
 //                SYSTEM STATE LOGIC
 // =====================================================
 
-void updateSystemState(const Measurement &measurement)
+void updateSystemState(
+    const Measurement &measurement)
 {
     SystemState previousState = systemState;
+
+    // -------------------------------------------------
+    // Invalid sensor data
+    // -------------------------------------------------
 
     if (!measurement.valid)
     {
         systemState = SYSTEM_FAULT;
     }
+
+    // -------------------------------------------------
+    // Very low / startup voltage
+    // -------------------------------------------------
+
     else if (measurement.voltage <= 10.0f)
     {
         systemState = SYSTEM_INIT;
     }
-    else if (measurement.power > POWER_THRESHOLD_W)
+
+    // -------------------------------------------------
+    // Over-power warning
+    // -------------------------------------------------
+
+    else if (measurement.power >
+             POWER_THRESHOLD_W)
     {
         systemState = SYSTEM_WARNING;
     }
+
+    // -------------------------------------------------
+    // Normal operation
+    // -------------------------------------------------
+
     else
     {
         systemState = SYSTEM_NORMAL;
     }
 
-    // Print only on state transition
+    // -------------------------------------------------
+    // State transition logging
+    // -------------------------------------------------
+
     if (systemState != previousState)
     {
         Serial.print("[SYSTEM] ");
@@ -368,22 +596,43 @@ void updateIndicators(SystemState state)
     {
         case SYSTEM_NORMAL:
 
-            digitalWrite(LED_NORMAL, HIGH);
-            digitalWrite(LED_ALERT, LOW);
+            digitalWrite(
+                LED_NORMAL,
+                HIGH
+            );
+
+            digitalWrite(
+                LED_ALERT,
+                LOW
+            );
 
             break;
 
         case SYSTEM_WARNING:
 
-            digitalWrite(LED_NORMAL, LOW);
-            digitalWrite(LED_ALERT, HIGH);
+            digitalWrite(
+                LED_NORMAL,
+                LOW
+            );
+
+            digitalWrite(
+                LED_ALERT,
+                HIGH
+            );
 
             break;
 
         case SYSTEM_FAULT:
 
-            digitalWrite(LED_NORMAL, LOW);
-            digitalWrite(LED_ALERT, HIGH);
+            digitalWrite(
+                LED_NORMAL,
+                LOW
+            );
+
+            digitalWrite(
+                LED_ALERT,
+                HIGH
+            );
 
             break;
 
@@ -391,8 +640,15 @@ void updateIndicators(SystemState state)
 
         default:
 
-            digitalWrite(LED_NORMAL, LOW);
-            digitalWrite(LED_ALERT, LOW);
+            digitalWrite(
+                LED_NORMAL,
+                LOW
+            );
+
+            digitalWrite(
+                LED_ALERT,
+                LOW
+            );
 
             break;
     }
@@ -402,7 +658,8 @@ void updateIndicators(SystemState state)
 //                  STATE NAME
 // =====================================================
 
-const char* getStateName(SystemState state)
+const char* getStateName(
+    SystemState state)
 {
     switch (state)
     {
@@ -430,44 +687,82 @@ const char* getStateName(SystemState state)
 void setup()
 {
     Serial.begin(115200);
+
     Serial2.begin(9600);
 
     delay(500);
 
     Serial.println();
-    Serial.println("======================================");
-    Serial.println(" REAL-TIME ENERGY CONTROLLER");
-    Serial.println(" ESP32 + FreeRTOS");
-    Serial.println("======================================");
+    Serial.println(
+        "======================================"
+    );
+
+    Serial.println(
+        " REAL-TIME ENERGY CONTROLLER"
+    );
+
+    Serial.println(
+        " ESP32 + FreeRTOS"
+    );
+
+    Serial.println(
+        " STEP 2 - QUEUE DATA PIPELINE"
+    );
+
+    Serial.println(
+        "======================================"
+    );
 
     // -------------------------------------------------
     // GPIO
     // -------------------------------------------------
 
-    pinMode(LED_NORMAL, OUTPUT);
-    pinMode(LED_ALERT, OUTPUT);
+    pinMode(
+        LED_NORMAL,
+        OUTPUT
+    );
 
-    digitalWrite(LED_NORMAL, LOW);
-    digitalWrite(LED_ALERT, LOW);
+    pinMode(
+        LED_ALERT,
+        OUTPUT
+    );
+
+    digitalWrite(
+        LED_NORMAL,
+        LOW
+    );
+
+    digitalWrite(
+        LED_ALERT,
+        LOW
+    );
 
     // -------------------------------------------------
     // LCD
     // -------------------------------------------------
 
     lcd.init();
+
     lcd.backlight();
 
     lcd.setCursor(0, 0);
-    lcd.print("Energy Controller");
+
+    lcd.print(
+        "Energy Controller"
+    );
 
     lcd.setCursor(0, 1);
-    lcd.print("Booting...");
+
+    lcd.print(
+        "Booting..."
+    );
 
     // -------------------------------------------------
-    // Mutex
+    // Create measurement mutex
     // -------------------------------------------------
 
-    measurementMutex = xSemaphoreCreateMutex();
+    measurementMutex =
+        xSemaphoreCreateMutex();
 
     if (measurementMutex == NULL)
     {
@@ -481,6 +776,36 @@ void setup()
         }
     }
 
+    Serial.println(
+        "[SYSTEM] Measurement mutex created"
+    );
+
+    // -------------------------------------------------
+    // Create measurement queue
+    // -------------------------------------------------
+
+    measurementQueue =
+        xQueueCreate(
+            5,
+            sizeof(Measurement)
+        );
+
+    if (measurementQueue == NULL)
+    {
+        Serial.println(
+            "[FATAL] Measurement queue creation failed"
+        );
+
+        while (true)
+        {
+            delay(1000);
+        }
+    }
+
+    Serial.println(
+        "[SYSTEM] Measurement queue created"
+    );
+
     // -------------------------------------------------
     // Blynk
     // -------------------------------------------------
@@ -489,58 +814,106 @@ void setup()
         "[SYSTEM] Connecting to Blynk..."
     );
 
-    Blynk.begin(auth, ssid, pass);
+    Blynk.begin(
+        auth,
+        ssid,
+        pass
+    );
 
     Serial.println(
         "[SYSTEM] Blynk connected"
     );
 
     // -------------------------------------------------
-    // FreeRTOS Tasks
+    // Create SensorTask
+    // Core 1
+    // Priority 3
     // -------------------------------------------------
 
-    xTaskCreatePinnedToCore(
-        sensorTask,
-        "SensorTask",
-        4096,
-        NULL,
-        3,
-        &sensorTaskHandle,
-        1
-    );
+    if (xTaskCreatePinnedToCore(
+            sensorTask,
+            "SensorTask",
+            4096,
+            NULL,
+            3,
+            &sensorTaskHandle,
+            1
+        ) != pdPASS)
+    {
+        Serial.println(
+            "[FATAL] SensorTask creation failed"
+        );
+    }
 
-    xTaskCreatePinnedToCore(
-        controlTask,
-        "ControlTask",
-        4096,
-        NULL,
-        4,
-        &controlTaskHandle,
-        1
-    );
+    // -------------------------------------------------
+    // Create ControlTask
+    // Core 1
+    // Priority 4
+    // -------------------------------------------------
 
-    xTaskCreatePinnedToCore(
-        displayTask,
-        "DisplayTask",
-        4096,
-        NULL,
-        1,
-        &displayTaskHandle,
-        1
-    );
+    if (xTaskCreatePinnedToCore(
+            controlTask,
+            "ControlTask",
+            4096,
+            NULL,
+            4,
+            &controlTaskHandle,
+            1
+        ) != pdPASS)
+    {
+        Serial.println(
+            "[FATAL] ControlTask creation failed"
+        );
+    }
 
-    xTaskCreatePinnedToCore(
-        networkTask,
-        "NetworkTask",
-        4096,
-        NULL,
-        2,
-        &networkTaskHandle,
-        0
-    );
+    // -------------------------------------------------
+    // Create DisplayTask
+    // Core 1
+    // Priority 1
+    // -------------------------------------------------
+
+    if (xTaskCreatePinnedToCore(
+            displayTask,
+            "DisplayTask",
+            4096,
+            NULL,
+            1,
+            &displayTaskHandle,
+            1
+        ) != pdPASS)
+    {
+        Serial.println(
+            "[FATAL] DisplayTask creation failed"
+        );
+    }
+
+    // -------------------------------------------------
+    // Create NetworkTask
+    // Core 0
+    // Priority 2
+    // -------------------------------------------------
+
+    if (xTaskCreatePinnedToCore(
+            networkTask,
+            "NetworkTask",
+            4096,
+            NULL,
+            2,
+            &networkTaskHandle,
+            0
+        ) != pdPASS)
+    {
+        Serial.println(
+            "[FATAL] NetworkTask creation failed"
+        );
+    }
 
     Serial.println(
         "[SYSTEM] All RTOS tasks created"
+    );
+
+    Serial.println(
+        "[SYSTEM] Queue pipeline active"
     );
 }
 
@@ -550,6 +923,10 @@ void setup()
 
 void loop()
 {
-    // Application runs through FreeRTOS tasks.
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    // All application work is handled
+    // by FreeRTOS tasks.
+
+    vTaskDelay(
+        pdMS_TO_TICKS(1000)
+    );
 }
