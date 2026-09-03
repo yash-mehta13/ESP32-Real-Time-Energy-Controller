@@ -1,1 +1,24 @@
+# Build artifacts
+build/
+.pio/
 
+# VS Code
+.vscode/
+
+# Arduino build outputs
+*.elf
+*.bin
+*.hex
+*.map
+
+# Local credentials
+secrets.h
+credentials.h
+config_private.h
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
