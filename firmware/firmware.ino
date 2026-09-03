@@ -1,20 +1,20 @@
-#include <WiFi.h>
-#include <BlynkSimpleEsp32.h>
-#include <PZEM004Tv30.h>
-#include <LiquidCrystal_I2C.h>
-
-// =====================================================
-//                    CONFIGURATION
-// =====================================================
-
 #define BLYNK_PRINT Serial
+
+// =====================================================
+//                  BLYNK CONFIGURATION
+// =====================================================
 
 #define BLYNK_TEMPLATE_ID "YOUR_TEMPLATE_ID"
 #define BLYNK_TEMPLATE_NAME "Energy Monitor"
 #define BLYNK_AUTH_TOKEN "YOUR_BLYNK_AUTH_TOKEN"
 
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <PZEM004Tv30.h>
+#include <LiquidCrystal_I2C.h>
+
 char auth[] = BLYNK_AUTH_TOKEN;
-char ssid[] = "YOUR_WIFI_SSID";
+char ssid[] = "YOUR_WIFI_NAME";
 char pass[] = "YOUR_WIFI_PASSWORD";
 
 // =====================================================
@@ -28,25 +28,23 @@ char pass[] = "YOUR_WIFI_PASSWORD";
 #define LED_ALERT  19
 
 #define LCD_ADDRESS 0x27
-#define LCD_COLUMNS 16
-#define LCD_ROWS    2
 
 PZEM004Tv30 pzem(Serial2, PZEM_RX_PIN, PZEM_TX_PIN);
-LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLUMNS, LCD_ROWS);
+LiquidCrystal_I2C lcd(LCD_ADDRESS, 16, 2);
 
 // =====================================================
-//                 PROTECTION CONFIG
+//                 SYSTEM PARAMETERS
 // =====================================================
 
 const float POWER_THRESHOLD_W = 485.0f;
 
-const unsigned long SENSOR_PERIOD_MS   = 1000;
-const unsigned long DISPLAY_PERIOD_MS  = 500;
-const unsigned long CONTROL_PERIOD_MS  = 100;
+const unsigned long SENSOR_PERIOD_MS    = 1000;
+const unsigned long CONTROL_PERIOD_MS   = 100;
+const unsigned long DISPLAY_PERIOD_MS    = 500;
 const unsigned long TELEMETRY_PERIOD_MS = 2000;
 
 // =====================================================
-//                 DATA STRUCTURES
+//                 MEASUREMENT STRUCTURE
 // =====================================================
 
 struct Measurement
@@ -71,7 +69,7 @@ Measurement latestMeasurement = {
 };
 
 // =====================================================
-//                 SYSTEM STATE
+//                  SYSTEM STATE
 // =====================================================
 
 enum SystemState
@@ -85,7 +83,7 @@ enum SystemState
 SystemState systemState = SYSTEM_INIT;
 
 // =====================================================
-//                 RTOS OBJECTS
+//                    RTOS OBJECTS
 // =====================================================
 
 SemaphoreHandle_t measurementMutex;
@@ -93,16 +91,16 @@ SemaphoreHandle_t measurementMutex;
 TaskHandle_t sensorTaskHandle;
 TaskHandle_t controlTaskHandle;
 TaskHandle_t displayTaskHandle;
-TaskHandle_t telemetryTaskHandle;
+TaskHandle_t networkTaskHandle;
 
 // =====================================================
-//                 FUNCTION DECLARATIONS
+//               TASK DECLARATIONS
 // =====================================================
 
 void sensorTask(void *parameter);
 void controlTask(void *parameter);
 void displayTask(void *parameter);
-void telemetryTask(void *parameter);
+void networkTask(void *parameter);
 
 void updateSystemState(const Measurement &measurement);
 void updateIndicators(SystemState state);
@@ -130,7 +128,7 @@ void sensorTask(void *parameter)
 
         reading.timestamp = millis();
 
-        // Validate PZEM measurement
+        // Validate complete PZEM reading
         if (isnan(reading.voltage) ||
             isnan(reading.current) ||
             isnan(reading.power) ||
@@ -143,9 +141,10 @@ void sensorTask(void *parameter)
             reading.valid = true;
         }
 
-        // Update shared measurement
-        if (xSemaphoreTake(measurementMutex,
-                           pdMS_TO_TICKS(50)) == pdTRUE)
+        // Store latest measurement
+        if (xSemaphoreTake(
+                measurementMutex,
+                pdMS_TO_TICKS(50)) == pdTRUE)
         {
             latestMeasurement = reading;
 
@@ -160,7 +159,7 @@ void sensorTask(void *parameter)
 }
 
 // =====================================================
-//                  CONTROL TASK
+//                   CONTROL TASK
 // =====================================================
 
 void controlTask(void *parameter)
@@ -173,9 +172,9 @@ void controlTask(void *parameter)
     {
         Measurement measurement;
 
-        // Obtain latest sensor data
-        if (xSemaphoreTake(measurementMutex,
-                           pdMS_TO_TICKS(50)) == pdTRUE)
+        if (xSemaphoreTake(
+                measurementMutex,
+                pdMS_TO_TICKS(50)) == pdTRUE)
         {
             measurement = latestMeasurement;
 
@@ -183,7 +182,6 @@ void controlTask(void *parameter)
         }
 
         updateSystemState(measurement);
-
         updateIndicators(systemState);
 
         vTaskDelayUntil(
@@ -194,7 +192,7 @@ void controlTask(void *parameter)
 }
 
 // =====================================================
-//                  DISPLAY TASK
+//                   DISPLAY TASK
 // =====================================================
 
 void displayTask(void *parameter)
@@ -207,8 +205,9 @@ void displayTask(void *parameter)
     {
         Measurement measurement;
 
-        if (xSemaphoreTake(measurementMutex,
-                           pdMS_TO_TICKS(50)) == pdTRUE)
+        if (xSemaphoreTake(
+                measurementMutex,
+                pdMS_TO_TICKS(50)) == pdTRUE)
         {
             measurement = latestMeasurement;
 
@@ -236,8 +235,9 @@ void displayTask(void *parameter)
 
             lcd.setCursor(0, 1);
             lcd.printf(
-                "P:%.1fW",
-                measurement.power
+                "P:%.1fW E:%.2f",
+                measurement.power,
+                measurement.energy
             );
         }
 
@@ -249,41 +249,70 @@ void displayTask(void *parameter)
 }
 
 // =====================================================
-//                 TELEMETRY TASK
+//                  NETWORK TASK
 // =====================================================
 
-void telemetryTask(void *parameter)
+void networkTask(void *parameter)
 {
-    Serial.println("[TelemetryTask] Started");
+    Serial.println("[NetworkTask] Started");
 
-    TickType_t lastWakeTime = xTaskGetTickCount();
+    unsigned long lastTelemetryTime = 0;
 
     for (;;)
     {
-        Measurement measurement;
-
-        if (xSemaphoreTake(measurementMutex,
-                           pdMS_TO_TICKS(50)) == pdTRUE)
-        {
-            measurement = latestMeasurement;
-
-            xSemaphoreGive(measurementMutex);
-        }
-
-        if (measurement.valid)
-        {
-            Blynk.virtualWrite(V0, measurement.voltage);
-            Blynk.virtualWrite(V1, measurement.current);
-            Blynk.virtualWrite(V2, measurement.power);
-            Blynk.virtualWrite(V3, measurement.energy);
-        }
+        // -------------------------------------------------
+        // Blynk must be serviced frequently
+        // -------------------------------------------------
 
         Blynk.run();
 
-        vTaskDelayUntil(
-            &lastWakeTime,
-            pdMS_TO_TICKS(TELEMETRY_PERIOD_MS)
-        );
+        // -------------------------------------------------
+        // Telemetry interval
+        // -------------------------------------------------
+
+        unsigned long now = millis();
+
+        if (now - lastTelemetryTime >= TELEMETRY_PERIOD_MS)
+        {
+            lastTelemetryTime = now;
+
+            Measurement measurement;
+
+            if (xSemaphoreTake(
+                    measurementMutex,
+                    pdMS_TO_TICKS(50)) == pdTRUE)
+            {
+                measurement = latestMeasurement;
+
+                xSemaphoreGive(measurementMutex);
+            }
+
+            if (measurement.valid)
+            {
+                Blynk.virtualWrite(
+                    V0,
+                    measurement.voltage
+                );
+
+                Blynk.virtualWrite(
+                    V1,
+                    measurement.current
+                );
+
+                Blynk.virtualWrite(
+                    V2,
+                    measurement.power
+                );
+
+                Blynk.virtualWrite(
+                    V3,
+                    measurement.energy
+                );
+            }
+        }
+
+        // Run approximately every 10 ms
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -312,18 +341,25 @@ void updateSystemState(const Measurement &measurement)
         systemState = SYSTEM_NORMAL;
     }
 
-    // Print only when state changes
+    // Print only on state transition
     if (systemState != previousState)
     {
-        Serial.print("[SYSTEM] State changed: ");
-        Serial.print(getStateName(previousState));
+        Serial.print("[SYSTEM] ");
+
+        Serial.print(
+            getStateName(previousState)
+        );
+
         Serial.print(" -> ");
-        Serial.println(getStateName(systemState));
+
+        Serial.println(
+            getStateName(systemState)
+        );
     }
 }
 
 // =====================================================
-//                 INDICATOR CONTROL
+//                 LED CONTROL
 // =====================================================
 
 void updateIndicators(SystemState state)
@@ -363,7 +399,7 @@ void updateIndicators(SystemState state)
 }
 
 // =====================================================
-//                 STATE NAME HELPER
+//                  STATE NAME
 // =====================================================
 
 const char* getStateName(SystemState state)
@@ -399,10 +435,10 @@ void setup()
     delay(500);
 
     Serial.println();
-    Serial.println("================================");
+    Serial.println("======================================");
     Serial.println(" REAL-TIME ENERGY CONTROLLER");
     Serial.println(" ESP32 + FreeRTOS");
-    Serial.println("================================");
+    Serial.println("======================================");
 
     // -------------------------------------------------
     // GPIO
@@ -425,17 +461,19 @@ void setup()
     lcd.print("Energy Controller");
 
     lcd.setCursor(0, 1);
-    lcd.print("System Booting");
+    lcd.print("Booting...");
 
     // -------------------------------------------------
-    // RTOS Synchronization
+    // Mutex
     // -------------------------------------------------
 
     measurementMutex = xSemaphoreCreateMutex();
 
     if (measurementMutex == NULL)
     {
-        Serial.println("[ERROR] Mutex creation failed!");
+        Serial.println(
+            "[FATAL] Mutex creation failed"
+        );
 
         while (true)
         {
@@ -444,17 +482,21 @@ void setup()
     }
 
     // -------------------------------------------------
-    // Wi-Fi / Blynk
+    // Blynk
     // -------------------------------------------------
 
-    Serial.println("[SYSTEM] Connecting to Blynk...");
+    Serial.println(
+        "[SYSTEM] Connecting to Blynk..."
+    );
 
     Blynk.begin(auth, ssid, pass);
 
-    Serial.println("[SYSTEM] Blynk connected");
+    Serial.println(
+        "[SYSTEM] Blynk connected"
+    );
 
     // -------------------------------------------------
-    // Create RTOS Tasks
+    // FreeRTOS Tasks
     // -------------------------------------------------
 
     xTaskCreatePinnedToCore(
@@ -488,18 +530,18 @@ void setup()
     );
 
     xTaskCreatePinnedToCore(
-        telemetryTask,
-        "TelemetryTask",
+        networkTask,
+        "NetworkTask",
         4096,
         NULL,
         2,
-        &telemetryTaskHandle,
+        &networkTaskHandle,
         0
     );
 
-    Serial.println("[SYSTEM] All tasks created");
-
-    systemState = SYSTEM_NORMAL;
+    Serial.println(
+        "[SYSTEM] All RTOS tasks created"
+    );
 }
 
 // =====================================================
@@ -508,5 +550,6 @@ void setup()
 
 void loop()
 {
+    // Application runs through FreeRTOS tasks.
     vTaskDelay(pdMS_TO_TICKS(1000));
 }
