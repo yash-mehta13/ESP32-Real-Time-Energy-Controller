@@ -1,129 +1,139 @@
-# ESP32 Real-Time Energy Controller
+#  ESP32 Real-Time Energy Controller
 
-FreeRTOS-based embedded energy monitoring and control firmware built on the ESP32.
+**FreeRTOS-based embedded energy monitoring and control firmware built on ESP32.**
 
-The project is being developed as an industrial-style embedded firmware system with a focus on **real-time task scheduling, sensor acquisition, inter-task communication, system monitoring, fault handling, and reliable control architecture**.
+Designed as an **industrial-style embedded firmware system** with real-time task scheduling, sensor acquisition, inter-task communication, system monitoring, and fault-aware control architecture.
 
-## Current Features
+---
 
-* ESP32-based embedded firmware
-* FreeRTOS task architecture
-* PZEM-004T energy measurement
-* UART communication
-* 16x2 I2C LCD
-* Blynk cloud telemetry
-* Real-time measurement processing
-* Mutex-protected shared measurement data
-* FreeRTOS queue-based inter-task communication
-* Basic system-state management
+##  Features
 
-## System Architecture
+*  ESP32 + **FreeRTOS** firmware architecture
+*  **PZEM-004T v3** energy measurement via UART
+*  FreeRTOS **Queue + Mutex** based task communication
+*  Real-time voltage, current, power, energy & power factor monitoring
+*  16×2 I²C LCD local display
+*  Blynk cloud telemetry
+*  Real-time system-state evaluation
+*  Designed for fault handling, diagnostics & protection expansion
+
+---
+
+##  System Architecture
 
 ```text
                          ESP32
-                           |
-          +----------------+----------------+
-          |                |                |
-          v                v                v
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+          ▼                ▼                ▼
      SensorTask       ControlTask      NetworkTask
        Core 1           Core 1            Core 0
-          |                |                |
-          |                |                +----> Blynk
-          |                |
-          v                v
-    Measurement ----> Control Logic
-          |
-          v
-   Latest Measurement
-          |
-          v
-     DisplayTask
-          |
-          v
-        I2C LCD
+          │                │                │
+          │                ▼                └──► Blynk
+          │          Control Logic
+          │
+          ▼
+    Measurement
+          │
+          └──────────► Latest Snapshot
+                           │
+                           ▼
+                      DisplayTask
+                           │
+                           ▼
+                         LCD
 ```
 
-## Hardware
+### Task Configuration
 
-| Component    | Interface | Purpose                  |
-| ------------ | --------- | ------------------------ |
-| ESP32        | —         | Main microcontroller     |
-| PZEM-004T v3 | UART      | Electrical measurements  |
-| 16x2 LCD     | I2C       | Local monitoring         |
-| Green LED    | GPIO      | Normal status            |
-| Red LED      | GPIO      | Warning/fault indication |
+| Task          | Purpose              | Period | Priority | Core |
+| ------------- | -------------------- | -----: | -------: | ---: |
+| `SensorTask`  | PZEM acquisition     |    1 s |        3 |    1 |
+| `ControlTask` | Processing & control | 100 ms |        4 |    1 |
+| `DisplayTask` | LCD update           | 500 ms |        1 |    1 |
+| `NetworkTask` | Blynk communication  |  10 ms |        2 |    0 |
 
-## Firmware Tasks
+---
 
-| Task        | Function                       | Period | Priority |   Core |
-| ----------- | ------------------------------ | -----: | -------: | -----: |
-| SensorTask  | Sensor acquisition             |    1 s |        3 | Core 1 |
-| ControlTask | Measurement processing/control | 100 ms |        4 | Core 1 |
-| DisplayTask | LCD update                     | 500 ms |        1 | Core 1 |
-| NetworkTask | Cloud communication            |  10 ms |        2 | Core 0 |
-
-## Inter-Task Communication
-
-The firmware uses a FreeRTOS queue to transfer measurement data from the sensor task to the control task.
+##  Measurement Pipeline
 
 ```text
 PZEM-004T
-    |
-    v
+    │ UART
+    ▼
 SensorTask
-    |
-    v
+    │
+    ▼
 FreeRTOS Queue
-    |
-    v
+    │
+    ▼
 ControlTask
+    │
+    ▼
+System State Logic
 ```
 
-A mutex protects the latest measurement snapshot accessed by other tasks.
+A mutex-protected measurement snapshot is shared with the display and network tasks.
 
 ```text
-SensorTask
-    |
-    v
-Latest Measurement
-    |
-    +------> DisplayTask
-    |
-    +------> NetworkTask
+              latestMeasurement
+                     │
+               Measurement Mutex
+                 ┌───┴───┐
+                 ▼       ▼
+           DisplayTask  NetworkTask
+                 │       │
+                 ▼       ▼
+                LCD     Blynk
 ```
 
-## Measurement Data
+**Queue** → transfers measurements between tasks
+**Mutex** → protects shared measurement data
 
-The firmware maintains the following measurement parameters:
+---
 
-* Voltage
-* Current
-* Real Power
-* Energy
-* Apparent Power
-* Power Factor
-* Measurement validity
-* Timestamp
+## 🔌 Hardware
 
-## Development Status
+| Component    | Interface | Purpose                 |
+| ------------ | --------- | ----------------------- |
+| ESP32        | —         | Main MCU                |
+| PZEM-004T v3 | UART      | Electrical measurements |
+| 16×2 LCD     | I²C       | Local monitoring        |
+| Green LED    | GPIO      | Normal status           |
+| Red LED      | GPIO      | Warning / fault         |
+
+---
+
+##  Measurements
+
+The firmware processes:
+
+`Voltage` · `Current` · `Real Power` · `Energy` · `Apparent Power` · `Power Factor`
+
+with measurement validity and timestamps.
+
+---
+
+##  Development Status
 
 ### Completed
 
 * [x] ESP32 hardware initialization
-* [x] PZEM-004T UART communication
+* [x] PZEM UART communication
 * [x] FreeRTOS task architecture
-* [x] Measurement structure
+* [x] Measurement data structure
 * [x] FreeRTOS measurement queue
 * [x] Mutex-protected measurement snapshot
 * [x] LCD monitoring
 * [x] Blynk telemetry
 * [x] Basic system-state evaluation
 
-### Upcoming
+### Roadmap
 
 * [ ] Protection state machine
-* [ ] Fault persistence and debounce
-* [ ] Fault manager
+* [ ] Fault persistence & debounce
+* [ ] Fault manager & diagnostics
 * [ ] Watchdog supervision
 * [ ] UART diagnostic interface
 * [ ] MQTT telemetry
@@ -131,16 +141,26 @@ The firmware maintains the following measurement parameters:
 * [ ] Fault-injection testing
 * [ ] Long-duration validation
 
-## Documentation
+---
+
+##  Documentation
 
 * [Firmware Architecture](docs/architecture.md)
+* [Measurement Pipeline](docs/measurement-pipeline.md)
 
-## Development Approach
+---
 
-The project is being developed incrementally. Each major firmware feature is implemented, tested on physical hardware, documented, and committed to the repository before moving to the next stage.
+##  Development Philosophy
 
-## Author
+The firmware is developed incrementally:
+
+**Design → Implement → Compile → Flash → Hardware Test → Document → Commit**
+
+Each major feature is validated on physical hardware before moving to the next stage.
+
+---
+
+##  Author
 
 **Yash Mehta**
-Electronics & Communication Engineering
-VIT Vellore
+Electronics & Communication Engineering — VIT Vellore
