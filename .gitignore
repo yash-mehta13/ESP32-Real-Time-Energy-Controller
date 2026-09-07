@@ -1,24 +1,33 @@
-# Build artifacts
-build/
-.pio/
+# =====================================================
+# Secrets
+# =====================================================
 
-# VS Code
-.vscode/
-
-# Arduino build outputs
-*.elf
-*.bin
-*.hex
-*.map
-
-# Local credentials
+firmware/config.h
+config.h
 secrets.h
-credentials.h
-config_private.h
+*.secret
+*.secrets
 
-# Logs
-*.log
+# =====================================================
+# Arduino / PlatformIO
+# =====================================================
 
-# OS files
+.pio/
+.vscode/
+build/
+dist/
+
+# =====================================================
+# OS
+# =====================================================
+
 .DS_Store
 Thumbs.db
+
+# =====================================================
+# Temporary files
+# =====================================================
+
+*.tmp
+*.bak
+*.swp
