@@ -1,19 +1,58 @@
 #define BLYNK_PRINT Serial
 
 // =====================================================
-//                  BLYNK CONFIGURATION
+//        ESP32 REAL-TIME ENERGY CONTROLLER
+//        STEP 7D - PRODUCTION MQTT / TLS
 // =====================================================
-
-#define BLYNK_TEMPLATE_ID   "YOUR_TEMPLATE_ID"
-#define BLYNK_TEMPLATE_NAME "Energy Monitor"
-#define BLYNK_AUTH_TOKEN    "YOUR_BLYNK_AUTH_TOKEN"
+//
+// Architecture:
+//
+//   Measurement Source
+//          |
+//          v
+//     SensorTask
+//          |
+//          v
+//   measurementQueue
+//          |
+//          v
+//     ControlTask
+//          |
+//          +------> Protection / Fault Manager
+//          |
+//          v
+//     System Snapshot
+//          |
+//          +------> DisplayTask
+//          |
+//          +------> NetworkTask
+//                         |
+//              +----------+----------+
+//              |                     |
+//            Blynk                 MQTT
+//
+// MQTT commands:
+//
+// MQTT Callback
+//      |
+//      v
+// commandQueue
+//      |
+//      v
+// ControlTask
+//
+// =====================================================
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <BlynkSimpleEsp32.h>
+#include <PubSubClient.h>
 #include <PZEM004Tv30.h>
 #include <LiquidCrystal_I2C.h>
 #include <math.h>
+#include <string.h>
+#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -23,14 +62,8 @@
 #include "esp_task_wdt.h"
 #include "esp_system.h"
 
-// =====================================================
-//                  NETWORK CREDENTIALS
-// =====================================================
-
-char auth[] = BLYNK_AUTH_TOKEN;
-
-char ssid[] = "YOUR_WIFI_SSID";
-char pass[] = "YOUR_WIFI_PASSWORD";
+#include "config.h"
+#include "hivemq_ca.h"
 
 // =====================================================
 //                  FIRMWARE INFORMATION
@@ -40,22 +73,134 @@ constexpr const char* FIRMWARE_NAME =
     "ESP32 Real-Time Energy Controller";
 
 constexpr const char* FIRMWARE_VERSION =
-    "1.0.0";
+    "1.2.0";
 
 constexpr const char* FIRMWARE_BUILD =
-    "STEP-6-UART-CLI";
+    "STEP-7D-PRODUCTION-MQTT";
 
 // =====================================================
-//                       HARDWARE
+//                  HARDWARE CONFIG
 // =====================================================
 
 constexpr uint8_t PZEM_RX_PIN = 16;
 constexpr uint8_t PZEM_TX_PIN = 17;
 
 constexpr uint8_t LED_NORMAL = 18;
-constexpr uint8_t LED_ALERT  = 19;
+constexpr uint8_t LED_ALERT = 19;
 
 constexpr uint8_t LCD_ADDRESS = 0x27;
+
+// =====================================================
+//                  MEASUREMENT SOURCE
+// =====================================================
+
+enum MeasurementSource
+{
+    MEASUREMENT_SOURCE_PZEM,
+    MEASUREMENT_SOURCE_SIMULATION
+};
+
+// -----------------------------------------------------
+// Keep simulation while PZEM hardware is unavailable.
+// -----------------------------------------------------
+
+constexpr MeasurementSource MEASUREMENT_SOURCE =
+    MEASUREMENT_SOURCE_SIMULATION;
+
+// =====================================================
+//                  PROTECTION CONFIG
+// =====================================================
+
+constexpr float POWER_WARNING_THRESHOLD_W =
+    485.0f;
+
+constexpr float POWER_FAULT_THRESHOLD_W =
+    550.0f;
+
+constexpr uint32_t FAULT_CONFIRM_TIME_MS =
+    2000;
+
+// =====================================================
+//                    TASK PERIODS
+// =====================================================
+
+constexpr uint32_t SENSOR_PERIOD_MS = 1000;
+constexpr uint32_t CONTROL_PERIOD_MS = 100;
+constexpr uint32_t DISPLAY_PERIOD_MS = 500;
+constexpr uint32_t NETWORK_PERIOD_MS = 10;
+constexpr uint32_t TELEMETRY_PERIOD_MS = 2000;
+
+// =====================================================
+//                    QUEUE CONFIG
+// =====================================================
+
+constexpr uint8_t MEASUREMENT_QUEUE_LENGTH = 5;
+constexpr uint8_t COMMAND_QUEUE_LENGTH = 8;
+
+// =====================================================
+//                  WATCHDOG CONFIG
+// =====================================================
+
+constexpr uint32_t WATCHDOG_TIMEOUT_MS = 8000;
+constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 6000;
+constexpr uint32_t WATCHDOG_STARTUP_GRACE_MS = 10000;
+constexpr uint32_t WATCHDOG_SUPERVISOR_PERIOD_MS = 1000;
+
+// =====================================================
+//                  NETWORK CONFIG
+// =====================================================
+
+constexpr uint32_t WIFI_RECONNECT_INTERVAL_MS = 10000;
+constexpr uint32_t BLYNK_RECONNECT_INTERVAL_MS = 5000;
+
+constexpr uint32_t MQTT_RECONNECT_INTERVAL_MS = 5000;
+
+constexpr uint32_t NTP_CHECK_INTERVAL_MS = 1000;
+
+constexpr uint32_t NTP_VALID_EPOCH = 1700000000UL;
+
+// =====================================================
+//                  MQTT CONFIG
+// =====================================================
+
+constexpr uint16_t MQTT_PORT = 8883;
+
+constexpr uint16_t MQTT_BUFFER_SIZE = 1024;
+
+constexpr uint16_t MQTT_KEEP_ALIVE_SECONDS = 30;
+
+constexpr uint16_t MQTT_SOCKET_TIMEOUT_SECONDS = 5;
+
+constexpr uint32_t MQTT_CONNECTION_TIMEOUT_MS = 10000;
+
+// =====================================================
+//                  MQTT TOPICS
+// =====================================================
+
+constexpr const char* MQTT_TOPIC_TELEMETRY =
+    "energy/device01/telemetry";
+
+constexpr const char* MQTT_TOPIC_STATE =
+    "energy/device01/status/state";
+
+constexpr const char* MQTT_TOPIC_FAULT =
+    "energy/device01/fault/code";
+
+constexpr const char* MQTT_TOPIC_AVAILABILITY =
+    "energy/device01/status/availability";
+
+constexpr const char* MQTT_TOPIC_CMD_RESET =
+    "energy/device01/cmd/reset";
+
+constexpr const char* MQTT_TOPIC_CMD_ACK =
+    "energy/device01/cmd/ack";
+
+constexpr const char* MQTT_TOPIC_COMMAND_STATUS =
+    "energy/device01/status/command";
+
+// =====================================================
+//                       HARDWARE
+// =====================================================
 
 PZEM004Tv30 pzem(
     Serial2,
@@ -70,90 +215,7 @@ LiquidCrystal_I2C lcd(
 );
 
 // =====================================================
-//                  SYSTEM CONFIGURATION
-// =====================================================
-
-// 0 = real PZEM measurements
-// 1 = synthetic protection test
-#define PROTECTION_TEST_MODE 0
-
-// =====================================================
-//                  PROTECTION CONFIG
-// =====================================================
-
-constexpr float POWER_WARNING_THRESHOLD_W = 485.0f;
-constexpr float POWER_FAULT_THRESHOLD_W   = 550.0f;
-
-constexpr uint32_t FAULT_CONFIRM_TIME_MS =
-    2000;
-
-// =====================================================
-//                     TASK PERIODS
-// =====================================================
-
-constexpr uint32_t SENSOR_PERIOD_MS =
-    1000;
-
-constexpr uint32_t CONTROL_PERIOD_MS =
-    100;
-
-constexpr uint32_t DISPLAY_PERIOD_MS =
-    500;
-
-constexpr uint32_t NETWORK_PERIOD_MS =
-    10;
-
-constexpr uint32_t TELEMETRY_PERIOD_MS =
-    2000;
-
-// =====================================================
-//                    QUEUE CONFIG
-// =====================================================
-
-constexpr uint8_t MEASUREMENT_QUEUE_LENGTH =
-    5;
-
-// =====================================================
-//                  WATCHDOG CONFIG
-// =====================================================
-
-constexpr uint32_t WATCHDOG_TIMEOUT_MS =
-    8000;
-
-constexpr uint32_t HEARTBEAT_TIMEOUT_MS =
-    6000;
-
-constexpr uint32_t WATCHDOG_STARTUP_GRACE_MS =
-    10000;
-
-constexpr uint32_t WATCHDOG_SUPERVISOR_PERIOD_MS =
-    1000;
-
-// =====================================================
-//                  NETWORK CONFIG
-// =====================================================
-
-constexpr uint32_t WIFI_RECONNECT_INTERVAL_MS =
-    10000;
-
-constexpr uint32_t BLYNK_RECONNECT_INTERVAL_MS =
-    5000;
-
-// =====================================================
-//                    CLI CONFIG
-// =====================================================
-
-constexpr uint32_t CLI_TASK_PERIOD_MS =
-    20;
-
-constexpr uint8_t CLI_BUFFER_SIZE =
-    40;
-
-constexpr uint8_t COMMAND_QUEUE_LENGTH =
-    8;
-
-// =====================================================
-//                 MEASUREMENT STRUCTURE
+//                MEASUREMENT STRUCTURE
 // =====================================================
 
 struct Measurement
@@ -199,8 +261,7 @@ enum SystemState
     SYSTEM_FAULT
 };
 
-SystemState systemState =
-    SYSTEM_INIT;
+SystemState systemState = SYSTEM_INIT;
 
 // =====================================================
 //                    FAULT CODES
@@ -246,46 +307,31 @@ FaultManager faultManager =
 //              PROTECTION TIMER VARIABLES
 // =====================================================
 
-bool faultTimerActive =
-    false;
-
-uint32_t faultStartTime =
-    0;
+bool faultTimerActive = false;
+uint32_t faultStartTime = 0;
 
 // =====================================================
 //                    RTOS OBJECTS
 // =====================================================
 
-SemaphoreHandle_t measurementMutex =
-    nullptr;
+SemaphoreHandle_t measurementMutex = nullptr;
 
-QueueHandle_t measurementQueue =
-    nullptr;
+SemaphoreHandle_t systemMutex = nullptr;
 
-QueueHandle_t commandQueue =
-    nullptr;
+QueueHandle_t measurementQueue = nullptr;
+
+QueueHandle_t commandQueue = nullptr;
 
 // =====================================================
 //                    TASK HANDLES
 // =====================================================
 
-TaskHandle_t sensorTaskHandle =
-    nullptr;
-
-TaskHandle_t controlTaskHandle =
-    nullptr;
-
-TaskHandle_t displayTaskHandle =
-    nullptr;
-
-TaskHandle_t networkTaskHandle =
-    nullptr;
-
-TaskHandle_t watchdogTaskHandle =
-    nullptr;
-
-TaskHandle_t cliTaskHandle =
-    nullptr;
+TaskHandle_t sensorTaskHandle = nullptr;
+TaskHandle_t controlTaskHandle = nullptr;
+TaskHandle_t displayTaskHandle = nullptr;
+TaskHandle_t networkTaskHandle = nullptr;
+TaskHandle_t watchdogTaskHandle = nullptr;
+TaskHandle_t cliTaskHandle = nullptr;
 
 // =====================================================
 //                 HEARTBEAT MONITORING
@@ -319,20 +365,44 @@ volatile uint32_t heartbeatTimestamp[
 //                 NETWORK STATE
 // =====================================================
 
-bool wifiConnected =
-    false;
+bool wifiConnected = false;
+bool blynkConnected = false;
+bool mqttConnected = false;
 
-bool blynkConnected =
-    false;
+bool timeSynchronized = false;
 
-uint32_t lastWiFiAttempt =
-    0;
+bool ntpStarted = false;
 
-uint32_t lastBlynkAttempt =
-    0;
+uint32_t lastWiFiAttempt = 0;
+uint32_t lastBlynkAttempt = 0;
+uint32_t lastMqttAttempt = 0;
+uint32_t lastTelemetryTime = 0;
+uint32_t lastNtpCheck = 0;
 
-uint32_t lastTelemetryTime =
-    0;
+// =====================================================
+//                MQTT DIRTY FLAGS
+// =====================================================
+//
+// ControlTask sets these flags.
+//
+// NetworkTask consumes them.
+//
+// This keeps all MQTT operations inside
+// NetworkTask.
+//
+
+volatile bool mqttStateDirty = true;
+volatile bool mqttFaultDirty = true;
+
+// =====================================================
+//                  MQTT CLIENT
+// =====================================================
+
+WiFiClientSecure mqttSecureClient;
+
+PubSubClient mqttClient(
+    mqttSecureClient
+);
 
 // =====================================================
 //                    CLI COMMANDS
@@ -351,7 +421,10 @@ enum CommandType
     CMD_UPTIME,
     CMD_RESET,
     CMD_ACK,
-    CMD_VERSION
+    CMD_VERSION,
+
+    CMD_REMOTE_RESET,
+    CMD_REMOTE_ACK
 };
 
 struct CliCommand
@@ -360,28 +433,26 @@ struct CliCommand
 };
 
 // =====================================================
-//               FUNCTION DECLARATIONS
+//                 FUNCTION DECLARATIONS
 // =====================================================
 
-// -----------------------------------------------------
-// Tasks
-// -----------------------------------------------------
+void sensorTask(void* parameter);
+void controlTask(void* parameter);
+void displayTask(void* parameter);
+void networkTask(void* parameter);
+void watchdogTask(void* parameter);
+void cliTask(void* parameter);
 
-void sensorTask(void *parameter);
-void controlTask(void *parameter);
-void displayTask(void *parameter);
-void networkTask(void *parameter);
-void watchdogTask(void *parameter);
-void cliTask(void *parameter);
+Measurement readPzemMeasurement();
+Measurement generateSimulatedMeasurement();
+Measurement readMeasurement();
 
-// -----------------------------------------------------
-// Watchdog
-// -----------------------------------------------------
+const char* getMeasurementSourceName();
 
 bool initializeWatchdog();
 
 bool registerCurrentTaskWithWatchdog(
-    const char *taskName
+    const char* taskName
 );
 
 void watchdogHeartbeat(
@@ -392,16 +463,11 @@ uint32_t getHeartbeatAge(
     HeartbeatId id
 );
 
-// -----------------------------------------------------
-// CLI
-// -----------------------------------------------------
-
 CommandType parseCommand(
-    const char *command
+    const char* command
 );
 
 void printCliPrompt();
-
 void printCliHelp();
 
 void processCliCommand(
@@ -412,37 +478,23 @@ void processControlCommand(
     CommandType command
 );
 
-// -----------------------------------------------------
-// Protection
-// -----------------------------------------------------
-
 void updateSystemState(
-    const Measurement &measurement
+    const Measurement& measurement
 );
 
 void updateIndicators(
     SystemState state
 );
 
-// -----------------------------------------------------
-// Fault manager
-// -----------------------------------------------------
-
 void raiseFault(
     FaultCode fault
 );
 
 void clearFault();
-
 void resetFault();
-
 void acknowledgeFault();
 
 void printFaultStatus();
-
-// -----------------------------------------------------
-// Diagnostics
-// -----------------------------------------------------
 
 void printFaultRaised(
     FaultCode fault
@@ -453,24 +505,15 @@ void printFaultCleared(
 );
 
 void printSystemStatus(
-    const Measurement &measurement
+    const Measurement& measurement
 );
 
 void printWatchdogStatus();
-
 void printTaskStatus();
-
 void printMeasurement();
-
 void printNetworkStatus();
-
 void printUptime();
-
 void printVersion();
-
-// -----------------------------------------------------
-// Helpers
-// -----------------------------------------------------
 
 const char* getStateName(
     SystemState state
@@ -483,6 +526,34 @@ const char* getFaultName(
 const char* getHeartbeatName(
     HeartbeatId id
 );
+
+void mqttCallback(
+    char* topic,
+    byte* payload,
+    unsigned int length
+);
+
+bool connectMqtt();
+
+void publishMqttTelemetry();
+
+void publishMqttState();
+
+void publishMqttFault();
+
+void publishMqttCommandStatus(
+    const char* command,
+    const char* result
+);
+
+void markMqttStateDirty();
+void markMqttFaultDirty();
+
+bool isTimeSynchronized();
+
+void startNtpSynchronization();
+
+void checkNtpSynchronization();
 
 // =====================================================
 //                  STATE NAME
@@ -569,6 +640,163 @@ const char* getHeartbeatName(
 }
 
 // =====================================================
+//            MEASUREMENT SOURCE NAME
+// =====================================================
+
+const char* getMeasurementSourceName()
+{
+    switch (MEASUREMENT_SOURCE)
+    {
+        case MEASUREMENT_SOURCE_PZEM:
+            return "PZEM";
+
+        case MEASUREMENT_SOURCE_SIMULATION:
+            return "SIMULATION";
+
+        default:
+            return "UNKNOWN";
+    }
+}
+
+// =====================================================
+//           SIMULATED MEASUREMENT SOURCE
+// =====================================================
+
+Measurement generateSimulatedMeasurement()
+{
+    Measurement measurement{};
+
+    const uint32_t elapsed =
+        millis() % 15000UL;
+
+    if (elapsed < 5000UL)
+    {
+        measurement.voltage = 230.0f;
+        measurement.current = 0.20f;
+        measurement.power = 40.0f;
+        measurement.energy = 0.0f;
+    }
+    else if (elapsed < 10000UL)
+    {
+        measurement.voltage = 230.0f;
+        measurement.current = 2.17f;
+        measurement.power = 500.0f;
+        measurement.energy = 0.0f;
+    }
+    else
+    {
+        measurement.voltage = 230.0f;
+        measurement.current = 2.60f;
+        measurement.power = 600.0f;
+        measurement.energy = 0.0f;
+    }
+
+    if (measurement.voltage > 0.0f &&
+        measurement.current >= 0.0f)
+    {
+        measurement.apparentPower =
+            measurement.voltage *
+            measurement.current;
+    }
+
+    if (measurement.apparentPower > 0.0f)
+    {
+        measurement.powerFactor =
+            measurement.power /
+            measurement.apparentPower;
+
+        measurement.powerFactor =
+            constrain(
+                measurement.powerFactor,
+                0.0f,
+                1.0f
+            );
+    }
+
+    measurement.valid = true;
+    measurement.timestamp = millis();
+
+    return measurement;
+}
+
+// =====================================================
+//              MEASUREMENT SOURCE
+// =====================================================
+
+Measurement readMeasurement()
+{
+    switch (MEASUREMENT_SOURCE)
+    {
+        case MEASUREMENT_SOURCE_PZEM:
+            return readPzemMeasurement();
+
+        case MEASUREMENT_SOURCE_SIMULATION:
+            return generateSimulatedMeasurement();
+
+        default:
+        {
+            Measurement invalid{};
+
+            invalid.valid = false;
+            invalid.timestamp = millis();
+
+            return invalid;
+        }
+    }
+}
+
+// =====================================================
+//              PZEM MEASUREMENT SOURCE
+// =====================================================
+
+Measurement readPzemMeasurement()
+{
+    Measurement reading{};
+
+    reading.voltage = pzem.voltage();
+    reading.current = pzem.current();
+    reading.power = pzem.power();
+    reading.energy = pzem.energy();
+
+    if (!isnan(reading.voltage) &&
+        !isnan(reading.current) &&
+        reading.voltage > 0.0f &&
+        reading.current >= 0.0f)
+    {
+        reading.apparentPower =
+            reading.voltage *
+            reading.current;
+    }
+
+    if (!isnan(reading.power) &&
+        reading.apparentPower > 0.0f)
+    {
+        reading.powerFactor =
+            reading.power /
+            reading.apparentPower;
+
+        reading.powerFactor =
+            constrain(
+                reading.powerFactor,
+                0.0f,
+                1.0f
+            );
+    }
+
+    reading.timestamp = millis();
+
+    reading.valid =
+        !isnan(reading.voltage) &&
+        !isnan(reading.current) &&
+        !isnan(reading.power) &&
+        !isnan(reading.energy) &&
+        !isnan(reading.apparentPower) &&
+        !isnan(reading.powerFactor);
+
+    return reading;
+}
+
+// =====================================================
 //                 WATCHDOG INIT
 // =====================================================
 
@@ -576,20 +804,14 @@ bool initializeWatchdog()
 {
     esp_task_wdt_config_t config =
     {
-        .timeout_ms =
-            WATCHDOG_TIMEOUT_MS,
-
+        .timeout_ms = WATCHDOG_TIMEOUT_MS,
         .idle_core_mask =
             (1U << portNUM_PROCESSORS) - 1U,
-
-        .trigger_panic =
-            true
+        .trigger_panic = true
     };
 
     esp_err_t result =
-        esp_task_wdt_init(
-            &config
-        );
+        esp_task_wdt_init(&config);
 
     if (result == ESP_OK)
     {
@@ -618,7 +840,7 @@ bool initializeWatchdog()
     }
 
     Serial.print(
-        "[WATCHDOG] Initialization failed. Error: "
+        "[WATCHDOG] Initialization failed: "
     );
 
     Serial.println(
@@ -629,40 +851,24 @@ bool initializeWatchdog()
 }
 
 // =====================================================
-//          REGISTER CURRENT TASK WITH WATCHDOG
+//          REGISTER TASK WITH WATCHDOG
 // =====================================================
 
 bool registerCurrentTaskWithWatchdog(
-    const char *taskName
+    const char* taskName
 )
 {
     esp_err_t result =
-        esp_task_wdt_add(
-            nullptr
-        );
+        esp_task_wdt_add(nullptr);
 
-    if (result == ESP_OK)
+    if (result == ESP_OK ||
+        result == ESP_ERR_INVALID_ARG)
     {
         Serial.print(
             "[WATCHDOG] Registered: "
         );
 
-        Serial.println(
-            taskName
-        );
-
-        return true;
-    }
-
-    if (result == ESP_ERR_INVALID_ARG)
-    {
-        Serial.print(
-            "[WATCHDOG] Already registered: "
-        );
-
-        Serial.println(
-            taskName
-        );
+        Serial.println(taskName);
 
         return true;
     }
@@ -671,15 +877,13 @@ bool registerCurrentTaskWithWatchdog(
         "[WATCHDOG] Registration failed: "
     );
 
-    Serial.println(
-        taskName
-    );
+    Serial.println(taskName);
 
     return false;
 }
 
 // =====================================================
-//                  HEARTBEAT UPDATE
+//                  HEARTBEAT
 // =====================================================
 
 void watchdogHeartbeat(
@@ -687,16 +891,14 @@ void watchdogHeartbeat(
 )
 {
     if (id >= HEARTBEAT_COUNT)
-    {
         return;
-    }
 
     heartbeatTimestamp[id] =
         millis();
 }
 
 // =====================================================
-//              HEARTBEAT AGE CALCULATION
+//              HEARTBEAT AGE
 // =====================================================
 
 uint32_t getHeartbeatAge(
@@ -704,27 +906,15 @@ uint32_t getHeartbeatAge(
 )
 {
     if (id >= HEARTBEAT_COUNT)
-    {
         return UINT32_MAX;
-    }
 
-    const uint32_t now =
-        millis();
+    const uint32_t now = millis();
 
     const uint32_t lastHeartbeat =
         heartbeatTimestamp[id];
 
     if (lastHeartbeat == 0)
-    {
         return UINT32_MAX;
-    }
-
-    // Protect against an impossible/future timestamp
-    // so unsigned subtraction cannot produce a huge value.
-    if (lastHeartbeat > now)
-    {
-        return 0;
-    }
 
     return now - lastHeartbeat;
 }
@@ -733,7 +923,7 @@ uint32_t getHeartbeatAge(
 //                    SENSOR TASK
 // =====================================================
 
-void sensorTask(void *parameter)
+void sensorTask(void* parameter)
 {
     Serial.println(
         "[SensorTask] Started"
@@ -752,94 +942,8 @@ void sensorTask(void *parameter)
 
     for (;;)
     {
-        Measurement reading{};
-
-        // -------------------------------------------------
-        // Read PZEM
-        // -------------------------------------------------
-
-        reading.voltage =
-            pzem.voltage();
-
-        reading.current =
-            pzem.current();
-
-        reading.power =
-            pzem.power();
-
-        reading.energy =
-            pzem.energy();
-
-        // -------------------------------------------------
-        // Apparent power
-        // -------------------------------------------------
-
-        if (!isnan(reading.voltage) &&
-            !isnan(reading.current) &&
-            reading.voltage > 0.0f &&
-            reading.current >= 0.0f)
-        {
-            reading.apparentPower =
-                reading.voltage *
-                reading.current;
-        }
-        else
-        {
-            reading.apparentPower =
-                0.0f;
-        }
-
-        // -------------------------------------------------
-        // Power factor
-        // -------------------------------------------------
-
-        if (!isnan(reading.power) &&
-            reading.apparentPower > 0.0f)
-        {
-            reading.powerFactor =
-                reading.power /
-                reading.apparentPower;
-
-            if (reading.powerFactor < 0.0f)
-            {
-                reading.powerFactor =
-                    0.0f;
-            }
-
-            if (reading.powerFactor > 1.0f)
-            {
-                reading.powerFactor =
-                    1.0f;
-            }
-        }
-        else
-        {
-            reading.powerFactor =
-                0.0f;
-        }
-
-        // -------------------------------------------------
-        // Timestamp
-        // -------------------------------------------------
-
-        reading.timestamp =
-            millis();
-
-        // -------------------------------------------------
-        // Validate measurement
-        // -------------------------------------------------
-
-        reading.valid =
-            !isnan(reading.voltage) &&
-            !isnan(reading.current) &&
-            !isnan(reading.power) &&
-            !isnan(reading.energy) &&
-            !isnan(reading.apparentPower) &&
-            !isnan(reading.powerFactor);
-
-        // -------------------------------------------------
-        // Send to ControlTask
-        // -------------------------------------------------
+        Measurement reading =
+            readMeasurement();
 
         if (xQueueSend(
                 measurementQueue,
@@ -851,10 +955,6 @@ void sensorTask(void *parameter)
                 "[SensorTask] WARNING: Queue full"
             );
         }
-
-        // -------------------------------------------------
-        // Update shared snapshot
-        // -------------------------------------------------
 
         if (xSemaphoreTake(
                 measurementMutex,
@@ -869,19 +969,11 @@ void sensorTask(void *parameter)
             );
         }
 
-        // -------------------------------------------------
-        // Watchdog
-        // -------------------------------------------------
-
         watchdogHeartbeat(
             HEARTBEAT_SENSOR
         );
 
         esp_task_wdt_reset();
-
-        // -------------------------------------------------
-        // Periodic execution
-        // -------------------------------------------------
 
         vTaskDelayUntil(
             &lastWakeTime,
@@ -896,7 +988,7 @@ void sensorTask(void *parameter)
 //                   CONTROL TASK
 // =====================================================
 
-void controlTask(void *parameter)
+void controlTask(void* parameter)
 {
     Serial.println(
         "[ControlTask] Started"
@@ -909,138 +1001,6 @@ void controlTask(void *parameter)
     watchdogHeartbeat(
         HEARTBEAT_CONTROL
     );
-
-#if PROTECTION_TEST_MODE
-
-    const uint32_t testStartTime =
-        millis();
-
-    for (;;)
-    {
-        Measurement measurement{};
-
-        const uint32_t elapsed =
-            millis() -
-            testStartTime;
-
-        if (elapsed < 5000)
-        {
-            measurement.voltage =
-                230.0f;
-
-            measurement.current =
-                0.20f;
-
-            measurement.power =
-                40.0f;
-
-            measurement.energy =
-                0.0f;
-
-            measurement.apparentPower =
-                46.0f;
-
-            measurement.powerFactor =
-                0.87f;
-
-            measurement.valid =
-                true;
-        }
-        else if (elapsed < 10000)
-        {
-            measurement.voltage =
-                230.0f;
-
-            measurement.current =
-                2.17f;
-
-            measurement.power =
-                500.0f;
-
-            measurement.energy =
-                0.0f;
-
-            measurement.apparentPower =
-                499.0f;
-
-            measurement.powerFactor =
-                0.96f;
-
-            measurement.valid =
-                true;
-        }
-        else
-        {
-            measurement.voltage =
-                230.0f;
-
-            measurement.current =
-                2.60f;
-
-            measurement.power =
-                600.0f;
-
-            measurement.energy =
-                0.0f;
-
-            measurement.apparentPower =
-                650.0f;
-
-            measurement.powerFactor =
-                0.92f;
-
-            measurement.valid =
-                true;
-        }
-
-        measurement.timestamp =
-            millis();
-
-        if (xSemaphoreTake(
-                measurementMutex,
-                pdMS_TO_TICKS(10)
-            ) == pdTRUE)
-        {
-            latestMeasurement =
-                measurement;
-
-            xSemaphoreGive(
-                measurementMutex
-            );
-        }
-
-        updateSystemState(
-            measurement
-        );
-
-        // Process queued CLI commands
-        CliCommand command{};
-
-        while (xQueueReceive(
-                   commandQueue,
-                   &command,
-                   0
-               ) == pdPASS)
-        {
-            processControlCommand(
-                command.type
-            );
-        }
-
-        watchdogHeartbeat(
-            HEARTBEAT_CONTROL
-        );
-
-        esp_task_wdt_reset();
-
-        vTaskDelay(
-            pdMS_TO_TICKS(
-                CONTROL_PERIOD_MS
-            )
-        );
-    }
-
-#else
 
     for (;;)
     {
@@ -1059,10 +1019,6 @@ void controlTask(void *parameter)
             );
         }
 
-        // -------------------------------------------------
-        // Process CLI commands
-        // -------------------------------------------------
-
         CliCommand command{};
 
         while (xQueueReceive(
@@ -1082,15 +1038,13 @@ void controlTask(void *parameter)
 
         esp_task_wdt_reset();
     }
-
-#endif
 }
 
 // =====================================================
 //                   DISPLAY TASK
 // =====================================================
 
-void displayTask(void *parameter)
+void displayTask(void* parameter)
 {
     Serial.println(
         "[DisplayTask] Started"
@@ -1123,10 +1077,6 @@ void displayTask(void *parameter)
                 measurementMutex
             );
         }
-
-        // -------------------------------------------------
-        // LCD update
-        // -------------------------------------------------
 
         lcd.clear();
 
@@ -1173,10 +1123,583 @@ void displayTask(void *parameter)
 }
 
 // =====================================================
+//                  MQTT CALLBACK
+// =====================================================
+
+void mqttCallback(
+    char* topic,
+    byte* payload,
+    unsigned int length
+)
+{
+    char message[32];
+
+    const unsigned int copyLength =
+        min(
+            length,
+            static_cast<unsigned int>(
+                sizeof(message) - 1
+            )
+        );
+
+    memcpy(
+        message,
+        payload,
+        copyLength
+    );
+
+    message[copyLength] =
+        '\0';
+
+    Serial.print(
+        "[MQTT] Command received: "
+    );
+
+    Serial.print(topic);
+
+    Serial.print(" -> ");
+
+    Serial.println(message);
+
+    CliCommand command{};
+
+    if (strcmp(
+            topic,
+            MQTT_TOPIC_CMD_RESET
+        ) == 0)
+    {
+        if (strcmp(
+                message,
+                "reset"
+            ) != 0)
+        {
+            Serial.println(
+                "[MQTT] Invalid reset command"
+            );
+
+            return;
+        }
+
+        command.type =
+            CMD_REMOTE_RESET;
+    }
+    else if (
+        strcmp(
+            topic,
+            MQTT_TOPIC_CMD_ACK
+        ) == 0
+    )
+    {
+        if (strcmp(
+                message,
+                "ack"
+            ) != 0)
+        {
+            Serial.println(
+                "[MQTT] Invalid ACK command"
+            );
+
+            return;
+        }
+
+        command.type =
+            CMD_REMOTE_ACK;
+    }
+    else
+    {
+        Serial.println(
+            "[MQTT] Unknown command topic"
+        );
+
+        return;
+    }
+
+    if (xQueueSend(
+            commandQueue,
+            &command,
+            0
+        ) != pdPASS)
+    {
+        Serial.println(
+            "[MQTT] Command queue full"
+        );
+    }
+}
+
+// =====================================================
+//                 MQTT CONNECTION
+// =====================================================
+
+bool connectMqtt()
+{
+    if (WiFi.status() != WL_CONNECTED)
+        return false;
+
+    if (!isTimeSynchronized())
+    {
+        Serial.println(
+            "[MQTT] Waiting for NTP time synchronization"
+        );
+
+        return false;
+    }
+
+    uint64_t chipId =
+        ESP.getEfuseMac();
+
+    char clientId[64];
+
+    snprintf(
+        clientId,
+        sizeof(clientId),
+        "%s-%04X%08X",
+        MQTT_DEVICE_ID,
+        static_cast<uint16_t>(
+            chipId >> 32
+        ),
+        static_cast<uint32_t>(
+            chipId
+        )
+    );
+
+    Serial.print(
+        "[MQTT] Connecting as: "
+    );
+
+    Serial.println(clientId);
+
+    bool connected =
+        mqttClient.connect(
+            clientId,
+            MQTT_USERNAME,
+            MQTT_PASSWORD,
+            MQTT_TOPIC_AVAILABILITY,
+            1,
+            true,
+            "offline"
+        );
+
+    if (!connected)
+    {
+        mqttConnected = false;
+
+        Serial.print(
+            "[MQTT] Connection failed. State = "
+        );
+
+        Serial.println(
+            mqttClient.state()
+        );
+
+        return false;
+    }
+
+    mqttConnected = true;
+
+    Serial.println(
+        "[MQTT] Connected securely"
+    );
+
+    if (!mqttClient.publish(
+            MQTT_TOPIC_AVAILABILITY,
+            "online",
+            true
+        ))
+    {
+        Serial.println(
+            "[MQTT] Online status publish failed"
+        );
+    }
+
+    bool resetSubscribed =
+        mqttClient.subscribe(
+            MQTT_TOPIC_CMD_RESET
+        );
+
+    bool ackSubscribed =
+        mqttClient.subscribe(
+            MQTT_TOPIC_CMD_ACK
+        );
+
+    Serial.print(
+        "[MQTT] Reset subscription: "
+    );
+
+    Serial.println(
+        resetSubscribed
+            ? "OK"
+            : "FAILED"
+    );
+
+    Serial.print(
+        "[MQTT] ACK subscription: "
+    );
+
+    Serial.println(
+        ackSubscribed
+            ? "OK"
+            : "FAILED"
+    );
+
+    mqttStateDirty = true;
+    mqttFaultDirty = true;
+
+    publishMqttState();
+    publishMqttFault();
+
+    publishMqttCommandStatus(
+        "connection",
+        "connected"
+    );
+
+    return true;
+}
+
+// =====================================================
+//                 MQTT TELEMETRY
+// =====================================================
+
+void publishMqttTelemetry()
+{
+    if (!mqttClient.connected())
+    {
+        mqttConnected = false;
+        return;
+    }
+
+    Measurement measurement{};
+
+    if (xSemaphoreTake(
+            measurementMutex,
+            pdMS_TO_TICKS(50)
+        ) != pdTRUE)
+    {
+        return;
+    }
+
+    measurement =
+        latestMeasurement;
+
+    xSemaphoreGive(
+        measurementMutex
+    );
+
+    SystemState stateSnapshot;
+    FaultManager faultSnapshot;
+
+    if (xSemaphoreTake(
+            systemMutex,
+            pdMS_TO_TICKS(50)
+        ) != pdTRUE)
+    {
+        return;
+    }
+
+    stateSnapshot =
+        systemState;
+
+    faultSnapshot =
+        faultManager;
+
+    xSemaphoreGive(
+        systemMutex
+    );
+
+    char payload[1024];
+
+    snprintf(
+        payload,
+        sizeof(payload),
+
+        "{"
+        "\"device_id\":\"%s\","
+        "\"firmware_version\":\"%s\","
+        "\"voltage\":%.2f,"
+        "\"current\":%.3f,"
+        "\"power\":%.2f,"
+        "\"energy\":%.3f,"
+        "\"apparent_power\":%.2f,"
+        "\"power_factor\":%.3f,"
+        "\"valid\":%s,"
+        "\"state\":\"%s\","
+        "\"fault\":\"%s\","
+        "\"fault_active\":%s,"
+        "\"acknowledged\":%s,"
+        "\"fault_count\":%lu,"
+        "\"source\":\"%s\","
+        "\"uptime_ms\":%lu"
+        "}",
+
+        MQTT_DEVICE_ID,
+        FIRMWARE_VERSION,
+
+        measurement.voltage,
+        measurement.current,
+        measurement.power,
+        measurement.energy,
+        measurement.apparentPower,
+        measurement.powerFactor,
+
+        measurement.valid
+            ? "true"
+            : "false",
+
+        getStateName(
+            stateSnapshot
+        ),
+
+        getFaultName(
+            faultSnapshot.activeFault
+        ),
+
+        faultSnapshot.active
+            ? "true"
+            : "false",
+
+        faultSnapshot.acknowledged
+            ? "true"
+            : "false",
+
+        static_cast<unsigned long>(
+            faultSnapshot.totalFaults
+        ),
+
+        getMeasurementSourceName(),
+
+        static_cast<unsigned long>(
+            millis()
+        )
+    );
+
+    if (!mqttClient.publish(
+            MQTT_TOPIC_TELEMETRY,
+            payload
+        ))
+    {
+        Serial.println(
+            "[MQTT] Telemetry publish failed"
+        );
+    }
+}
+
+// =====================================================
+//                    MQTT STATE
+// =====================================================
+
+void publishMqttState()
+{
+    if (!mqttClient.connected())
+    {
+        mqttConnected = false;
+        return;
+    }
+
+    SystemState stateSnapshot;
+
+    if (xSemaphoreTake(
+            systemMutex,
+            pdMS_TO_TICKS(50)
+        ) != pdTRUE)
+    {
+        return;
+    }
+
+    stateSnapshot =
+        systemState;
+
+    xSemaphoreGive(
+        systemMutex
+    );
+
+    if (mqttClient.publish(
+            MQTT_TOPIC_STATE,
+            getStateName(
+                stateSnapshot
+            ),
+            true
+        ))
+    {
+        mqttStateDirty = false;
+    }
+    else
+    {
+        Serial.println(
+            "[MQTT] State publish failed"
+        );
+    }
+}
+
+// =====================================================
+//                    MQTT FAULT
+// =====================================================
+
+void publishMqttFault()
+{
+    if (!mqttClient.connected())
+    {
+        mqttConnected = false;
+        return;
+    }
+
+    FaultCode faultSnapshot;
+
+    if (xSemaphoreTake(
+            systemMutex,
+            pdMS_TO_TICKS(50)
+        ) != pdTRUE)
+    {
+        return;
+    }
+
+    faultSnapshot =
+        faultManager.activeFault;
+
+    xSemaphoreGive(
+        systemMutex
+    );
+
+    if (mqttClient.publish(
+            MQTT_TOPIC_FAULT,
+            getFaultName(
+                faultSnapshot
+            ),
+            true
+        ))
+    {
+        mqttFaultDirty = false;
+    }
+    else
+    {
+        Serial.println(
+            "[MQTT] Fault publish failed"
+        );
+    }
+}
+
+// =====================================================
+//              MQTT COMMAND STATUS
+// =====================================================
+
+void publishMqttCommandStatus(
+    const char* command,
+    const char* result
+)
+{
+    if (!mqttClient.connected())
+        return;
+
+    char payload[160];
+
+    snprintf(
+        payload,
+        sizeof(payload),
+        "{\"command\":\"%s\",\"result\":\"%s\",\"uptime_ms\":%lu}",
+        command,
+        result,
+        static_cast<unsigned long>(
+            millis()
+        )
+    );
+
+    mqttClient.publish(
+        MQTT_TOPIC_COMMAND_STATUS,
+        payload
+    );
+}
+
+// =====================================================
+//                 MQTT DIRTY FLAGS
+// =====================================================
+
+void markMqttStateDirty()
+{
+    mqttStateDirty = true;
+}
+
+void markMqttFaultDirty()
+{
+    mqttFaultDirty = true;
+}
+
+// =====================================================
+//                  NTP FUNCTIONS
+// =====================================================
+
+bool isTimeSynchronized()
+{
+    time_t now = time(nullptr);
+
+    return now >=
+           static_cast<time_t>(
+               NTP_VALID_EPOCH
+           );
+}
+
+// =====================================================
+//             START NTP SYNCHRONIZATION
+// =====================================================
+
+void startNtpSynchronization()
+{
+    if (ntpStarted)
+        return;
+
+    Serial.println(
+        "[NTP] Starting time synchronization"
+    );
+
+    configTime(
+        0,
+        0,
+        NTP_SERVER_1,
+        NTP_SERVER_2
+    );
+
+    ntpStarted = true;
+}
+
+// =====================================================
+//             CHECK NTP SYNCHRONIZATION
+// =====================================================
+
+void checkNtpSynchronization()
+{
+    if (!wifiConnected)
+        return;
+
+    if (!ntpStarted)
+        startNtpSynchronization();
+
+    if (isTimeSynchronized())
+    {
+        if (!timeSynchronized)
+        {
+            timeSynchronized = true;
+
+            time_t now = time(nullptr);
+
+            Serial.print(
+                "[NTP] Time synchronized: "
+            );
+
+            Serial.println(
+                static_cast<unsigned long>(
+                    now
+                )
+            );
+        }
+
+        return;
+    }
+
+    timeSynchronized = false;
+}
+
+// =====================================================
 //                  NETWORK TASK
 // =====================================================
 
-void networkTask(void *parameter)
+void networkTask(void* parameter)
 {
     Serial.println(
         "[NetworkTask] Started"
@@ -1203,30 +1726,31 @@ void networkTask(void *parameter)
         {
             if (wifiConnected)
             {
-                wifiConnected =
-                    false;
-
-                blynkConnected =
-                    false;
+                wifiConnected = false;
+                blynkConnected = false;
+                mqttConnected = false;
+                timeSynchronized = false;
+                ntpStarted = false;
 
                 Serial.println(
                     "[NETWORK] WiFi disconnected"
                 );
             }
 
-            if (now - lastWiFiAttempt >=
-                WIFI_RECONNECT_INTERVAL_MS)
+            if (
+                now - lastWiFiAttempt >=
+                WIFI_RECONNECT_INTERVAL_MS
+            )
             {
-                lastWiFiAttempt =
-                    now;
+                lastWiFiAttempt = now;
 
                 Serial.println(
                     "[NETWORK] Attempting WiFi reconnect"
                 );
 
                 WiFi.begin(
-                    ssid,
-                    pass
+                    WIFI_SSID,
+                    WIFI_PASSWORD
                 );
             }
         }
@@ -1234,8 +1758,7 @@ void networkTask(void *parameter)
         {
             if (!wifiConnected)
             {
-                wifiConnected =
-                    true;
+                wifiConnected = true;
 
                 Serial.print(
                     "[NETWORK] WiFi connected. IP: "
@@ -1244,6 +1767,22 @@ void networkTask(void *parameter)
                 Serial.println(
                     WiFi.localIP()
                 );
+
+                startNtpSynchronization();
+            }
+
+            // =================================================
+            // NTP
+            // =================================================
+
+            if (
+                now - lastNtpCheck >=
+                NTP_CHECK_INTERVAL_MS
+            )
+            {
+                lastNtpCheck = now;
+
+                checkNtpSynchronization();
             }
 
             // =================================================
@@ -1252,14 +1791,14 @@ void networkTask(void *parameter)
 
             if (!Blynk.connected())
             {
-                blynkConnected =
-                    false;
+                blynkConnected = false;
 
-                if (now - lastBlynkAttempt >=
-                    BLYNK_RECONNECT_INTERVAL_MS)
+                if (
+                    now - lastBlynkAttempt >=
+                    BLYNK_RECONNECT_INTERVAL_MS
+                )
                 {
-                    lastBlynkAttempt =
-                        now;
+                    lastBlynkAttempt = now;
 
                     Serial.println(
                         "[NETWORK] Attempting Blynk connection"
@@ -1267,8 +1806,7 @@ void networkTask(void *parameter)
 
                     if (Blynk.connect(1000))
                     {
-                        blynkConnected =
-                            true;
+                        blynkConnected = true;
 
                         Serial.println(
                             "[NETWORK] Blynk connected"
@@ -1280,8 +1818,7 @@ void networkTask(void *parameter)
             {
                 if (!blynkConnected)
                 {
-                    blynkConnected =
-                        true;
+                    blynkConnected = true;
 
                     Serial.println(
                         "[NETWORK] Blynk connection restored"
@@ -1289,64 +1826,127 @@ void networkTask(void *parameter)
                 }
 
                 Blynk.run();
+            }
 
-                // -------------------------------------------------
-                // Telemetry
-                // -------------------------------------------------
+            // =================================================
+            // MQTT
+            // =================================================
 
-                if (now - lastTelemetryTime >=
-                    TELEMETRY_PERIOD_MS)
+            if (!mqttClient.connected())
+            {
+                mqttConnected = false;
+
+                if (
+                    timeSynchronized &&
+                    now - lastMqttAttempt >=
+                    MQTT_RECONNECT_INTERVAL_MS
+                )
                 {
-                    lastTelemetryTime =
-                        now;
+                    lastMqttAttempt = now;
 
-                    Measurement measurement{};
+                    connectMqtt();
+                }
+            }
+            else
+            {
+                mqttConnected = true;
 
-                    if (xSemaphoreTake(
-                            measurementMutex,
-                            pdMS_TO_TICKS(50)
-                        ) == pdTRUE)
-                    {
-                        measurement =
-                            latestMeasurement;
+                mqttClient.loop();
 
-                        xSemaphoreGive(
-                            measurementMutex
-                        );
-                    }
+                // -------------------------------------------------
+                // Publish changed state
+                // -------------------------------------------------
 
-                    if (measurement.valid)
-                    {
-                        Blynk.virtualWrite(
-                            V0,
-                            measurement.voltage
-                        );
+                if (mqttStateDirty)
+                {
+                    publishMqttState();
+                }
 
-                        Blynk.virtualWrite(
-                            V1,
-                            measurement.current
-                        );
+                // -------------------------------------------------
+                // Publish changed fault
+                // -------------------------------------------------
 
-                        Blynk.virtualWrite(
-                            V2,
-                            measurement.power
-                        );
+                if (mqttFaultDirty)
+                {
+                    publishMqttFault();
+                }
+            }
 
-                        Blynk.virtualWrite(
-                            V3,
-                            measurement.energy
-                        );
+            // =================================================
+            // TELEMETRY
+            // =================================================
 
-                        Blynk.virtualWrite(
-                            V4,
-                            measurement.apparentPower
-                        );
+            if (
+                now - lastTelemetryTime >=
+                TELEMETRY_PERIOD_MS
+            )
+            {
+                lastTelemetryTime = now;
 
-                        Blynk.virtualWrite(
-                            V5,
-                            measurement.powerFactor
-                        );
-                    }
+                Measurement measurement{};
+
+                if (
+                    xSemaphoreTake(
+                        measurementMutex,
+                        pdMS_TO_TICKS(50)
+                    ) == pdTRUE
+                )
+                {
+                    measurement =
+                        latestMeasurement;
+
+                    xSemaphoreGive(
+                        measurementMutex
+                    );
+                }
+
+                // -------------------------------------------------
+                // Blynk telemetry
+                // -------------------------------------------------
+
+                if (
+                    blynkConnected &&
+                    measurement.valid
+                )
+                {
+                    Blynk.virtualWrite(
+                        V0,
+                        measurement.voltage
+                    );
+
+                    Blynk.virtualWrite(
+                        V1,
+                        measurement.current
+                    );
+
+                    Blynk.virtualWrite(
+                        V2,
+                        measurement.power
+                    );
+
+                    Blynk.virtualWrite(
+                        V3,
+                        measurement.energy
+                    );
+
+                    Blynk.virtualWrite(
+                        V4,
+                        measurement.apparentPower
+                    );
+
+                    Blynk.virtualWrite(
+                        V5,
+                        measurement.powerFactor
+                    );
+                }
+
+                // -------------------------------------------------
+                // MQTT telemetry
+                // -------------------------------------------------
+
+                if (mqttConnected)
+                {
+                    publishMqttTelemetry();
                 }
             }
         }
@@ -1369,7 +1969,7 @@ void networkTask(void *parameter)
 //                 WATCHDOG SUPERVISOR
 // =====================================================
 
-void watchdogTask(void *parameter)
+void watchdogTask(void* parameter)
 {
     Serial.println(
         "[WatchdogTask] Started"
@@ -1397,12 +1997,10 @@ void watchdogTask(void *parameter)
 
         esp_task_wdt_reset();
 
-        // -------------------------------------------------
-        // Startup grace period
-        // -------------------------------------------------
-
-        if (now - supervisorStartTime <
-            WATCHDOG_STARTUP_GRACE_MS)
+        if (
+            now - supervisorStartTime <
+            WATCHDOG_STARTUP_GRACE_MS
+        )
         {
             vTaskDelay(
                 pdMS_TO_TICKS(
@@ -1413,22 +2011,21 @@ void watchdogTask(void *parameter)
             continue;
         }
 
-        // -------------------------------------------------
-        // Heartbeat supervision
-        // -------------------------------------------------
+        bool systemHealthy = true;
 
-        bool systemHealthy =
-            true;
-
-        for (uint8_t i = 0;
-             i < HEARTBEAT_COUNT;
-             i++)
+        for (
+            uint8_t i = 0;
+            i < HEARTBEAT_COUNT;
+            i++
+        )
         {
             const uint32_t lastHeartbeat =
                 heartbeatTimestamp[i];
 
             if (lastHeartbeat == 0)
             {
+                systemHealthy = false;
+
                 Serial.print(
                     "[WATCHDOG] Missing heartbeat: "
                 );
@@ -1439,9 +2036,6 @@ void watchdogTask(void *parameter)
                     )
                 );
 
-                systemHealthy =
-                    false;
-
                 continue;
             }
 
@@ -1450,9 +2044,13 @@ void watchdogTask(void *parameter)
                     static_cast<HeartbeatId>(i)
                 );
 
-            if (heartbeatAge >
-                HEARTBEAT_TIMEOUT_MS)
+            if (
+                heartbeatAge >
+                HEARTBEAT_TIMEOUT_MS
+            )
             {
+                systemHealthy = false;
+
                 Serial.print(
                     "[WATCHDOG] STALE TASK: "
                 );
@@ -1474,35 +2072,13 @@ void watchdogTask(void *parameter)
                 Serial.println(
                     " ms"
                 );
-
-                systemHealthy =
-                    false;
             }
         }
 
-        // -------------------------------------------------
-        // Recovery
-        // -------------------------------------------------
-
         if (!systemHealthy)
         {
-            Serial.println();
             Serial.println(
-                "================================"
-            );
-
-            Serial.println(
-                "       WATCHDOG FAILURE"
-            );
-
-            Serial.println(
-                "================================"
-            );
-
-            printWatchdogStatus();
-
-            Serial.println(
-                "[WATCHDOG] Restarting system..."
+                "[WATCHDOG] FAILURE - restarting"
             );
 
             delay(100);
@@ -1519,14 +2095,21 @@ void watchdogTask(void *parameter)
 }
 
 // =====================================================
-//                     CLI TASK
+//                     CLI PROMPT
 // =====================================================
+
 void printCliPrompt()
 {
-    Serial.print("\r\ndiag> ");
+    Serial.print(
+        "\r\ndiag> "
+    );
 }
 
-void cliTask(void *parameter)
+// =====================================================
+//                     CLI TASK
+// =====================================================
+
+void cliTask(void* parameter)
 {
     Serial.println(
         "[CliTask] Started"
@@ -1544,11 +2127,9 @@ void cliTask(void *parameter)
         CLI_BUFFER_SIZE
     ];
 
-    uint8_t bufferIndex =
-        0;
+    uint8_t bufferIndex = 0;
 
-    bool commandOverflow =
-        false;
+    bool commandOverflow = false;
 
     printCliHelp();
 
@@ -1563,15 +2144,15 @@ void cliTask(void *parameter)
                     Serial.read()
                 );
 
-            // -------------------------------------------------
-            // End of command
-            // -------------------------------------------------
-
-            if (c == '\r' ||
-                c == '\n')
+            if (
+                c == '\r' ||
+                c == '\n'
+            )
             {
-                if (bufferIndex == 0 &&
-                    !commandOverflow)
+                if (
+                    bufferIndex == 0 &&
+                    !commandOverflow
+                )
                 {
                     continue;
                 }
@@ -1604,10 +2185,6 @@ void cliTask(void *parameter)
                         Serial.println(
                             commandBuffer
                         );
-
-                        Serial.println(
-                            "[CLI] Type 'help' for commands"
-                        );
                     }
                     else
                     {
@@ -1617,23 +2194,18 @@ void cliTask(void *parameter)
                     }
                 }
 
-                bufferIndex =
-                    0;
-
-                commandOverflow =
-                    false;
+                bufferIndex = 0;
+                commandOverflow = false;
 
                 printCliPrompt();
 
                 continue;
             }
 
-            // -------------------------------------------------
-            // Backspace
-            // -------------------------------------------------
-
-            if (c == '\b' ||
-                c == 127)
+            if (
+                c == '\b' ||
+                c == 127
+            )
             {
                 if (bufferIndex > 0)
                 {
@@ -1647,22 +2219,18 @@ void cliTask(void *parameter)
                 continue;
             }
 
-            // -------------------------------------------------
-            // Ignore non-printable characters
-            // -------------------------------------------------
-
-            if (c < 32 ||
-                c > 126)
+            if (
+                c < 32 ||
+                c > 126
+            )
             {
                 continue;
             }
 
-            // -------------------------------------------------
-            // Buffer overflow protection
-            // -------------------------------------------------
-
-            if (bufferIndex <
-                CLI_BUFFER_SIZE - 1)
+            if (
+                bufferIndex <
+                CLI_BUFFER_SIZE - 1
+            )
             {
                 commandBuffer[
                     bufferIndex++
@@ -1672,8 +2240,7 @@ void cliTask(void *parameter)
             }
             else
             {
-                commandOverflow =
-                    true;
+                commandOverflow = true;
             }
         }
 
@@ -1696,7 +2263,7 @@ void cliTask(void *parameter)
 // =====================================================
 
 CommandType parseCommand(
-    const char *command
+    const char* command
 )
 {
     if (strcmp(command, "help") == 0)
@@ -1739,6 +2306,7 @@ CommandType parseCommand(
 void printCliHelp()
 {
     Serial.println();
+
     Serial.println(
         "========================================"
     );
@@ -1768,7 +2336,7 @@ void printCliHelp()
     );
 
     Serial.println(
-        "watchdog   - Watchdog/heartbeat status"
+        "watchdog   - Watchdog status"
     );
 
     Serial.println(
@@ -1807,134 +2375,82 @@ void processCliCommand(
     switch (command)
     {
         case CMD_HELP:
-
             printCliHelp();
-
             break;
 
         case CMD_STATUS:
+        {
+            CliCommand request{CMD_STATUS};
 
-            // Status is requested from CLI but
-            // executed in ControlTask to maintain
-            // protection-state ownership.
-            {
-                CliCommand request{
-                    CMD_STATUS
-                };
-
-                if (xQueueSend(
-                        commandQueue,
-                        &request,
-                        pdMS_TO_TICKS(50)
-                    ) != pdPASS)
-                {
-                    Serial.println(
-                        "[CLI] Command queue full"
-                    );
-                }
-            }
+            xQueueSend(
+                commandQueue,
+                &request,
+                pdMS_TO_TICKS(50)
+            );
 
             break;
+        }
 
         case CMD_MEASURE:
-
             printMeasurement();
-
             break;
 
         case CMD_FAULT:
+        {
+            CliCommand request{CMD_FAULT};
 
-            {
-                CliCommand request{
-                    CMD_FAULT
-                };
-
-                if (xQueueSend(
-                        commandQueue,
-                        &request,
-                        pdMS_TO_TICKS(50)
-                    ) != pdPASS)
-                {
-                    Serial.println(
-                        "[CLI] Command queue full"
-                    );
-                }
-            }
+            xQueueSend(
+                commandQueue,
+                &request,
+                pdMS_TO_TICKS(50)
+            );
 
             break;
+        }
 
         case CMD_WATCHDOG:
-
             printWatchdogStatus();
-
             break;
 
         case CMD_TASKS:
-
             printTaskStatus();
-
             break;
 
         case CMD_UPTIME:
-
             printUptime();
-
             break;
 
         case CMD_RESET:
+        {
+            CliCommand request{CMD_RESET};
 
-            {
-                CliCommand request{
-                    CMD_RESET
-                };
-
-                if (xQueueSend(
-                        commandQueue,
-                        &request,
-                        pdMS_TO_TICKS(50)
-                    ) != pdPASS)
-                {
-                    Serial.println(
-                        "[CLI] Command queue full"
-                    );
-                }
-            }
+            xQueueSend(
+                commandQueue,
+                &request,
+                pdMS_TO_TICKS(50)
+            );
 
             break;
+        }
 
         case CMD_ACK:
+        {
+            CliCommand request{CMD_ACK};
 
-            {
-                CliCommand request{
-                    CMD_ACK
-                };
-
-                if (xQueueSend(
-                        commandQueue,
-                        &request,
-                        pdMS_TO_TICKS(50)
-                    ) != pdPASS)
-                {
-                    Serial.println(
-                        "[CLI] Command queue full"
-                    );
-                }
-            }
+            xQueueSend(
+                commandQueue,
+                &request,
+                pdMS_TO_TICKS(50)
+            );
 
             break;
+        }
 
         case CMD_VERSION:
-
             printVersion();
-
             break;
 
         default:
-
-            Serial.println(
-                "[CLI] Invalid command"
-            );
-
             break;
     }
 }
@@ -1953,10 +2469,12 @@ void processControlCommand(
         {
             Measurement measurement{};
 
-            if (xSemaphoreTake(
+            if (
+                xSemaphoreTake(
                     measurementMutex,
                     pdMS_TO_TICKS(50)
-                ) == pdTRUE)
+                ) == pdTRUE
+            )
             {
                 measurement =
                     latestMeasurement;
@@ -1993,8 +2511,37 @@ void processControlCommand(
 
             break;
 
-        default:
+        case CMD_REMOTE_RESET:
 
+            Serial.println(
+                "[MQTT] Remote reset command executing"
+            );
+
+            resetFault();
+
+            publishMqttCommandStatus(
+                "reset",
+                "accepted"
+            );
+
+            break;
+
+        case CMD_REMOTE_ACK:
+
+            Serial.println(
+                "[MQTT] Remote ACK command executing"
+            );
+
+            acknowledgeFault();
+
+            publishMqttCommandStatus(
+                "ack",
+                "accepted"
+            );
+
+            break;
+
+        default:
             break;
     }
 }
@@ -2007,10 +2554,12 @@ void printMeasurement()
 {
     Measurement measurement{};
 
-    if (xSemaphoreTake(
+    if (
+        xSemaphoreTake(
             measurementMutex,
             pdMS_TO_TICKS(50)
-        ) == pdTRUE)
+        ) == pdTRUE
+    )
     {
         measurement =
             latestMeasurement;
@@ -2021,6 +2570,7 @@ void printMeasurement()
     }
 
     Serial.println();
+
     Serial.println(
         "========================================"
     );
@@ -2031,6 +2581,14 @@ void printMeasurement()
 
     Serial.println(
         "========================================"
+    );
+
+    Serial.print(
+        "Source           : "
+    );
+
+    Serial.println(
+        getMeasurementSourceName()
     );
 
     Serial.print(
@@ -2052,9 +2610,7 @@ void printMeasurement()
         2
     );
 
-    Serial.println(
-        " V"
-    );
+    Serial.println(" V");
 
     Serial.print(
         "Current          : "
@@ -2065,9 +2621,7 @@ void printMeasurement()
         3
     );
 
-    Serial.println(
-        " A"
-    );
+    Serial.println(" A");
 
     Serial.print(
         "Power            : "
@@ -2078,9 +2632,7 @@ void printMeasurement()
         2
     );
 
-    Serial.println(
-        " W"
-    );
+    Serial.println(" W");
 
     Serial.print(
         "Energy           : "
@@ -2091,9 +2643,7 @@ void printMeasurement()
         3
     );
 
-    Serial.println(
-        " kWh"
-    );
+    Serial.println(" kWh");
 
     Serial.print(
         "Apparent Power   : "
@@ -2104,9 +2654,7 @@ void printMeasurement()
         2
     );
 
-    Serial.println(
-        " VA"
-    );
+    Serial.println(" VA");
 
     Serial.print(
         "Power Factor     : "
@@ -2115,31 +2663,6 @@ void printMeasurement()
     Serial.println(
         measurement.powerFactor,
         3
-    );
-
-    Serial.print(
-        "Timestamp        : "
-    );
-
-    Serial.print(
-        measurement.timestamp
-    );
-
-    Serial.println(
-        " ms"
-    );
-
-    Serial.print(
-        "Measurement Age  : "
-    );
-
-    Serial.print(
-        millis() -
-        measurement.timestamp
-    );
-
-    Serial.println(
-        " ms"
     );
 
     Serial.println(
@@ -2154,6 +2677,7 @@ void printMeasurement()
 void printNetworkStatus()
 {
     Serial.println();
+
     Serial.println(
         "=========== NETWORK STATUS ============="
     );
@@ -2186,10 +2710,18 @@ void printNetworkStatus()
             WiFi.RSSI()
         );
 
-        Serial.println(
-            " dBm"
-        );
+        Serial.println(" dBm");
     }
+
+    Serial.print(
+        "NTP              : "
+    );
+
+    Serial.println(
+        timeSynchronized
+            ? "SYNCHRONIZED"
+            : "NOT SYNCHRONIZED"
+    );
 
     Serial.print(
         "Blynk            : "
@@ -2198,6 +2730,16 @@ void printNetworkStatus()
     Serial.println(
         blynkConnected
             ? "CONNECTED"
+            : "DISCONNECTED"
+    );
+
+    Serial.print(
+        "MQTT             : "
+    );
+
+    Serial.println(
+        mqttConnected
+            ? "CONNECTED/TLS"
             : "DISCONNECTED"
     );
 
@@ -2228,6 +2770,7 @@ void printUptime()
         uptimeSeconds % 60UL;
 
     Serial.println();
+
     Serial.println(
         "========================================"
     );
@@ -2240,44 +2783,16 @@ void printUptime()
         "========================================"
     );
 
-    Serial.print(
-        "Uptime           : "
+    Serial.printf(
+        "Uptime           : %lud %luh %lum %lus\n",
+        static_cast<unsigned long>(days),
+        static_cast<unsigned long>(hours),
+        static_cast<unsigned long>(minutes),
+        static_cast<unsigned long>(seconds)
     );
 
     Serial.print(
-        days
-    );
-
-    Serial.print(
-        "d "
-    );
-
-    Serial.print(
-        hours
-    );
-
-    Serial.print(
-        "h "
-    );
-
-    Serial.print(
-        minutes
-    );
-
-    Serial.print(
-        "m "
-    );
-
-    Serial.print(
-        seconds
-    );
-
-    Serial.println(
-        "s"
-    );
-
-    Serial.print(
-        "Milliseconds      : "
+        "Milliseconds     : "
     );
 
     Serial.println(
@@ -2296,6 +2811,7 @@ void printUptime()
 void printVersion()
 {
     Serial.println();
+
     Serial.println(
         "========================================"
     );
@@ -2330,6 +2846,14 @@ void printVersion()
 
     Serial.println(
         FIRMWARE_BUILD
+    );
+
+    Serial.print(
+        "Measurement Source: "
+    );
+
+    Serial.println(
+        getMeasurementSourceName()
     );
 
     Serial.print(
@@ -2380,6 +2904,7 @@ void printVersion()
 void printTaskStatus()
 {
     Serial.println();
+
     Serial.println(
         "========================================"
     );
@@ -2412,16 +2937,15 @@ void printTaskStatus()
         "CliTask"
     };
 
-    for (uint8_t i = 0;
-         i < 6;
-         i++)
+    for (
+        uint8_t i = 0;
+        i < 6;
+        i++
+    )
     {
         if (handles[i] == nullptr)
         {
-            Serial.print(
-                names[i]
-            );
-
+            Serial.print(names[i]);
             Serial.println(
                 " : NOT CREATED"
             );
@@ -2429,40 +2953,7 @@ void printTaskStatus()
             continue;
         }
 
-        Serial.print(
-            names[i]
-        );
-
-        Serial.print(
-            " | State="
-        );
-
-        switch (eTaskGetState(handles[i]))
-        {
-            case eRunning:
-                Serial.print("RUNNING");
-                break;
-
-            case eReady:
-                Serial.print("READY");
-                break;
-
-            case eBlocked:
-                Serial.print("BLOCKED");
-                break;
-
-            case eSuspended:
-                Serial.print("SUSPENDED");
-                break;
-
-            case eDeleted:
-                Serial.print("DELETED");
-                break;
-
-            default:
-                Serial.print("UNKNOWN");
-                break;
-        }
+        Serial.print(names[i]);
 
         Serial.print(
             " | Priority="
@@ -2478,13 +2969,11 @@ void printTaskStatus()
             " | StackFree="
         );
 
-        Serial.print(
+        Serial.println(
             uxTaskGetStackHighWaterMark(
                 handles[i]
             )
         );
-
-        Serial.println();
     }
 
     Serial.println(
@@ -2493,14 +2982,35 @@ void printTaskStatus()
 }
 
 // =====================================================
-//              SYSTEM STATE DIAGNOSTIC
+//              SYSTEM STATUS
 // =====================================================
 
 void printSystemStatus(
-    const Measurement &measurement
+    const Measurement& measurement
 )
 {
+    SystemState stateSnapshot;
+    FaultManager faultSnapshot;
+
+    if (
+        xSemaphoreTake(
+            systemMutex,
+            pdMS_TO_TICKS(50)
+        ) != pdTRUE
+    )
+    {
+        return;
+    }
+
+    stateSnapshot = systemState;
+    faultSnapshot = faultManager;
+
+    xSemaphoreGive(
+        systemMutex
+    );
+
     Serial.println();
+
     Serial.println(
         "========================================"
     );
@@ -2519,7 +3029,7 @@ void printSystemStatus(
 
     Serial.println(
         getStateName(
-            systemState
+            stateSnapshot
         )
     );
 
@@ -2529,7 +3039,7 @@ void printSystemStatus(
 
     Serial.println(
         getFaultName(
-            faultManager.activeFault
+            faultSnapshot.activeFault
         )
     );
 
@@ -2539,7 +3049,7 @@ void printSystemStatus(
 
     Serial.println(
         getFaultName(
-            faultManager.lastFault
+            faultSnapshot.lastFault
         )
     );
 
@@ -2548,7 +3058,17 @@ void printSystemStatus(
     );
 
     Serial.println(
-        faultManager.totalFaults
+        faultSnapshot.totalFaults
+    );
+
+    Serial.print(
+        "Acknowledged     : "
+    );
+
+    Serial.println(
+        faultSnapshot.acknowledged
+            ? "YES"
+            : "NO"
     );
 
     Serial.print(
@@ -2574,19 +3094,6 @@ void printSystemStatus(
         " W"
     );
 
-    Serial.print(
-        "Measurement Age  : "
-    );
-
-    Serial.print(
-        millis() -
-        measurement.timestamp
-    );
-
-    Serial.println(
-        " ms"
-    );
-
     Serial.println(
         "========================================"
     );
@@ -2598,10 +3105,8 @@ void printSystemStatus(
 
 void printWatchdogStatus()
 {
-    const uint32_t now =
-        millis();
-
     Serial.println();
+
     Serial.println(
         "========================================"
     );
@@ -2614,33 +3119,11 @@ void printWatchdogStatus()
         "========================================"
     );
 
-    Serial.print(
-        "TWDT Timeout     : "
-    );
-
-    Serial.print(
-        WATCHDOG_TIMEOUT_MS
-    );
-
-    Serial.println(
-        " ms"
-    );
-
-    Serial.print(
-        "Heartbeat Limit  : "
-    );
-
-    Serial.print(
-        HEARTBEAT_TIMEOUT_MS
-    );
-
-    Serial.println(
-        " ms"
-    );
-
-    for (uint8_t i = 0;
-         i < HEARTBEAT_COUNT;
-         i++)
+    for (
+        uint8_t i = 0;
+        i < HEARTBEAT_COUNT;
+        i++
+    )
     {
         Serial.print(
             getHeartbeatName(
@@ -2648,11 +3131,14 @@ void printWatchdogStatus()
             )
         );
 
-        Serial.print(
-            " : "
-        );
+        Serial.print(" : ");
 
-        if (heartbeatTimestamp[i] == 0)
+        uint32_t age =
+            getHeartbeatAge(
+                static_cast<HeartbeatId>(i)
+            );
+
+        if (age == UINT32_MAX)
         {
             Serial.println(
                 "NO HEARTBEAT"
@@ -2660,27 +3146,10 @@ void printWatchdogStatus()
         }
         else
         {
-            const uint32_t heartbeatAge =
-                getHeartbeatAge(
-                    static_cast<HeartbeatId>(i)
-                );
-
-            if (heartbeatAge == UINT32_MAX)
-            {
-                Serial.println(
-                    "NO HEARTBEAT"
-                );
-            }
-            else
-            {
-                Serial.print(
-                    heartbeatAge
-                );
-
-                Serial.println(
-                    " ms ago"
-                );
-            }
+            Serial.print(age);
+            Serial.println(
+                " ms ago"
+            );
         }
     }
 
@@ -2690,81 +3159,75 @@ void printWatchdogStatus()
 }
 
 // =====================================================
-//                  SYSTEM STATE LOGIC
+//              SYSTEM STATE LOGIC
 // =====================================================
 
 void updateSystemState(
-    const Measurement &measurement
+    const Measurement& measurement
 )
 {
-    const SystemState previousState =
-        systemState;
+    SystemState previousState;
+    FaultCode previousFault;
 
-    const FaultCode previousFault =
-        faultManager.activeFault;
-
-    // -------------------------------------------------
-    // Latched fault
-    // -------------------------------------------------
-
-    if (systemState == SYSTEM_FAULT)
+    if (
+        xSemaphoreTake(
+            systemMutex,
+            pdMS_TO_TICKS(50)
+        ) != pdTRUE
+    )
     {
         return;
     }
 
-    // -------------------------------------------------
-    // Invalid sensor
-    // -------------------------------------------------
+    previousState = systemState;
+    previousFault =
+        faultManager.activeFault;
+
+    if (systemState == SYSTEM_FAULT)
+    {
+        xSemaphoreGive(
+            systemMutex
+        );
+
+        return;
+    }
 
     if (!measurement.valid)
     {
-        faultTimerActive =
-            false;
+        faultTimerActive = false;
 
         raiseFault(
             FAULT_SENSOR_INVALID
         );
     }
-
-    // -------------------------------------------------
-    // Initialization
-    // -------------------------------------------------
-
     else if (measurement.voltage <= 10.0f)
     {
-        faultTimerActive =
-            false;
+        faultTimerActive = false;
 
         systemState =
             SYSTEM_INIT;
     }
-
-    // -------------------------------------------------
-    // Severe overpower
-    // -------------------------------------------------
-
-    else if (measurement.power >
-             POWER_FAULT_THRESHOLD_W)
+    else if (
+        measurement.power >
+        POWER_FAULT_THRESHOLD_W
+    )
     {
         if (!faultTimerActive)
         {
-            faultTimerActive =
-                true;
-
-            faultStartTime =
-                millis();
+            faultTimerActive = true;
+            faultStartTime = millis();
 
             Serial.println(
                 "[PROTECTION] Fault timer started"
             );
         }
 
-        if (millis() -
-            faultStartTime >=
-            FAULT_CONFIRM_TIME_MS)
+        if (
+            millis() - faultStartTime >=
+            FAULT_CONFIRM_TIME_MS
+        )
         {
-            faultTimerActive =
-                false;
+            faultTimerActive = false;
 
             raiseFault(
                 FAULT_OVERPOWER
@@ -2776,37 +3239,23 @@ void updateSystemState(
                 SYSTEM_WARNING;
         }
     }
-
-    // -------------------------------------------------
-    // Warning
-    // -------------------------------------------------
-
-    else if (measurement.power >
-             POWER_WARNING_THRESHOLD_W)
+    else if (
+        measurement.power >
+        POWER_WARNING_THRESHOLD_W
+    )
     {
-        faultTimerActive =
-            false;
+        faultTimerActive = false;
 
         systemState =
             SYSTEM_WARNING;
     }
-
-    // -------------------------------------------------
-    // Normal
-    // -------------------------------------------------
-
     else
     {
-        faultTimerActive =
-            false;
+        faultTimerActive = false;
 
         systemState =
             SYSTEM_NORMAL;
     }
-
-    // -------------------------------------------------
-    // State transition
-    // -------------------------------------------------
 
     if (systemState != previousState)
     {
@@ -2815,9 +3264,7 @@ void updateSystemState(
         );
 
         Serial.print(
-            getStateName(
-                previousState
-            )
+            getStateName(previousState)
         );
 
         Serial.print(
@@ -2825,25 +3272,27 @@ void updateSystemState(
         );
 
         Serial.println(
-            getStateName(
-                systemState
-            )
+            getStateName(systemState)
         );
 
         updateIndicators(
             systemState
         );
+
+        markMqttStateDirty();
     }
 
-    // -------------------------------------------------
-    // Fault transition
-    // -------------------------------------------------
-
-    if (faultManager.activeFault !=
-        previousFault)
+    if (
+        faultManager.activeFault !=
+        previousFault
+    )
     {
-        if (faultManager.activeFault !=
-            FAULT_NONE)
+        markMqttFaultDirty();
+
+        if (
+            faultManager.activeFault !=
+            FAULT_NONE
+        )
         {
             printFaultRaised(
                 faultManager.activeFault
@@ -2860,6 +3309,10 @@ void updateSystemState(
             );
         }
     }
+
+    xSemaphoreGive(
+        systemMutex
+    );
 }
 
 // =====================================================
@@ -2871,12 +3324,12 @@ void raiseFault(
 )
 {
     if (fault == FAULT_NONE)
-    {
         return;
-    }
 
-    if (faultManager.active &&
-        faultManager.activeFault == fault)
+    if (
+        faultManager.active &&
+        faultManager.activeFault == fault
+    )
     {
         return;
     }
@@ -2898,14 +3351,17 @@ void raiseFault(
 
     faultManager.totalFaults++;
 
-    faultManager.active =
-        true;
+    faultManager.active = true;
 
     faultManager.acknowledged =
         false;
 
     systemState =
         SYSTEM_FAULT;
+
+    updateIndicators(
+        SYSTEM_FAULT
+    );
 }
 
 // =====================================================
@@ -2915,9 +3371,7 @@ void raiseFault(
 void clearFault()
 {
     if (!faultManager.active)
-    {
         return;
-    }
 
     const FaultCode clearedFault =
         faultManager.activeFault;
@@ -2925,20 +3379,15 @@ void clearFault()
     faultManager.activeFault =
         FAULT_NONE;
 
-    faultManager.active =
-        false;
+    faultManager.active = false;
 
     faultManager.acknowledged =
         false;
 
-    faultManager.activeSince =
-        0;
+    faultManager.activeSince = 0;
 
-    faultTimerActive =
-        false;
-
-    faultStartTime =
-        0;
+    faultTimerActive = false;
+    faultStartTime = 0;
 
     systemState =
         SYSTEM_INIT;
@@ -2946,6 +3395,9 @@ void clearFault()
     updateIndicators(
         SYSTEM_INIT
     );
+
+    markMqttFaultDirty();
+    markMqttStateDirty();
 
     printFaultCleared(
         clearedFault
@@ -3009,7 +3461,27 @@ void acknowledgeFault()
 
 void printFaultStatus()
 {
+    FaultManager snapshot;
+
+    if (
+        xSemaphoreTake(
+            systemMutex,
+            pdMS_TO_TICKS(50)
+        ) != pdTRUE
+    )
+    {
+        return;
+    }
+
+    snapshot =
+        faultManager;
+
+    xSemaphoreGive(
+        systemMutex
+    );
+
     Serial.println();
+
     Serial.println(
         "========================================"
     );
@@ -3028,7 +3500,7 @@ void printFaultStatus()
 
     Serial.println(
         getFaultName(
-            faultManager.activeFault
+            snapshot.activeFault
         )
     );
 
@@ -3038,7 +3510,7 @@ void printFaultStatus()
 
     Serial.println(
         getFaultName(
-            faultManager.lastFault
+            snapshot.lastFault
         )
     );
 
@@ -3047,7 +3519,7 @@ void printFaultStatus()
     );
 
     Serial.println(
-        faultManager.active
+        snapshot.active
             ? "YES"
             : "NO"
     );
@@ -3057,7 +3529,7 @@ void printFaultStatus()
     );
 
     Serial.println(
-        faultManager.acknowledged
+        snapshot.acknowledged
             ? "YES"
             : "NO"
     );
@@ -3067,48 +3539,8 @@ void printFaultStatus()
     );
 
     Serial.println(
-        faultManager.totalFaults
+        snapshot.totalFaults
     );
-
-    Serial.print(
-        "Last Fault Time  : "
-    );
-
-    Serial.print(
-        faultManager.lastFaultTime
-    );
-
-    Serial.println(
-        " ms"
-    );
-
-    if (faultManager.active)
-    {
-        Serial.print(
-            "Active Since     : "
-        );
-
-        Serial.print(
-            faultManager.activeSince
-        );
-
-        Serial.println(
-            " ms"
-        );
-
-        Serial.print(
-            "Active Duration  : "
-        );
-
-        Serial.print(
-            millis() -
-            faultManager.activeSince
-        );
-
-        Serial.println(
-            " ms"
-        );
-    }
 
     Serial.println(
         "========================================"
@@ -3124,6 +3556,7 @@ void printFaultRaised(
 )
 {
     Serial.println();
+
     Serial.println(
         "========================================"
     );
@@ -3137,37 +3570,23 @@ void printFaultRaised(
     );
 
     Serial.print(
-        "[FAULT] Code       : "
+        "[FAULT] Code      : "
     );
 
     Serial.println(
-        getFaultName(
-            fault
-        )
+        getFaultName(fault)
     );
 
     Serial.print(
-        "[FAULT] Count      : "
+        "[FAULT] Count     : "
     );
 
     Serial.println(
         faultManager.totalFaults
     );
 
-    Serial.print(
-        "[FAULT] Timestamp  : "
-    );
-
-    Serial.print(
-        faultManager.activeSince
-    );
-
     Serial.println(
-        " ms"
-    );
-
-    Serial.println(
-        "[FAULT] State      : LATCHED"
+        "[FAULT] State     : LATCHED"
     );
 
     Serial.println(
@@ -3184,30 +3603,13 @@ void printFaultCleared(
 )
 {
     Serial.println();
-    Serial.println(
-        "========================================"
-    );
 
     Serial.print(
         "[FAULT] CLEARED    : "
     );
 
     Serial.println(
-        getFaultName(
-            fault
-        )
-    );
-
-    Serial.print(
-        "[FAULT] Total      : "
-    );
-
-    Serial.println(
-        faultManager.totalFaults
-    );
-
-    Serial.println(
-        "========================================"
+        getFaultName(fault)
     );
 }
 
@@ -3221,20 +3623,6 @@ void updateIndicators(
 {
     switch (state)
     {
-        case SYSTEM_INIT:
-
-            digitalWrite(
-                LED_NORMAL,
-                LOW
-            );
-
-            digitalWrite(
-                LED_ALERT,
-                LOW
-            );
-
-            break;
-
         case SYSTEM_NORMAL:
 
             digitalWrite(
@@ -3250,19 +3638,6 @@ void updateIndicators(
             break;
 
         case SYSTEM_WARNING:
-
-            digitalWrite(
-                LED_NORMAL,
-                LOW
-            );
-
-            digitalWrite(
-                LED_ALERT,
-                HIGH
-            );
-
-            break;
-
         case SYSTEM_FAULT:
 
             digitalWrite(
@@ -3299,9 +3674,7 @@ void updateIndicators(
 
 void setup()
 {
-    Serial.begin(
-        115200
-    );
+    Serial.begin(115200);
 
     Serial2.begin(
         9600
@@ -3310,6 +3683,7 @@ void setup()
     delay(500);
 
     Serial.println();
+
     Serial.println(
         "=========================================="
     );
@@ -3323,11 +3697,19 @@ void setup()
     );
 
     Serial.println(
-        " STEP 6 - UART DIAGNOSTICS / CLI"
+        " STEP 7D - PRODUCTION MQTT / TLS"
     );
 
     Serial.println(
         "=========================================="
+    );
+
+    Serial.print(
+        "[SYSTEM] Measurement Source: "
+    );
+
+    Serial.println(
+        getMeasurementSourceName()
     );
 
     // =================================================
@@ -3362,32 +3744,32 @@ void setup()
 
     lcd.backlight();
 
-    lcd.setCursor(
-        0,
-        0
-    );
+    lcd.setCursor(0, 0);
 
     lcd.print(
         "Energy Controller"
     );
 
-    lcd.setCursor(
-        0,
-        1
-    );
+    lcd.setCursor(0, 1);
 
     lcd.print(
         "Booting..."
     );
 
     // =================================================
-    // MEASUREMENT MUTEX
+    // MUTEXES
     // =================================================
 
     measurementMutex =
         xSemaphoreCreateMutex();
 
-    if (measurementMutex == nullptr)
+    systemMutex =
+        xSemaphoreCreateMutex();
+
+    if (
+        measurementMutex == nullptr ||
+        systemMutex == nullptr
+    )
     {
         Serial.println(
             "[FATAL] Mutex creation failed"
@@ -3399,12 +3781,8 @@ void setup()
         }
     }
 
-    Serial.println(
-        "[SYSTEM] Measurement mutex created"
-    );
-
     // =================================================
-    // MEASUREMENT QUEUE
+    // QUEUES
     // =================================================
 
     measurementQueue =
@@ -3413,36 +3791,19 @@ void setup()
             sizeof(Measurement)
         );
 
-    if (measurementQueue == nullptr)
-    {
-        Serial.println(
-            "[FATAL] Measurement queue creation failed"
-        );
-
-        while (true)
-        {
-            delay(1000);
-        }
-    }
-
-    Serial.println(
-        "[SYSTEM] Measurement queue created"
-    );
-
-    // =================================================
-    // CLI COMMAND QUEUE
-    // =================================================
-
     commandQueue =
         xQueueCreate(
             COMMAND_QUEUE_LENGTH,
             sizeof(CliCommand)
         );
 
-    if (commandQueue == nullptr)
+    if (
+        measurementQueue == nullptr ||
+        commandQueue == nullptr
+    )
     {
         Serial.println(
-            "[FATAL] Command queue creation failed"
+            "[FATAL] Queue creation failed"
         );
 
         while (true)
@@ -3450,10 +3811,6 @@ void setup()
             delay(1000);
         }
     }
-
-    Serial.println(
-        "[SYSTEM] CLI command queue created"
-    );
 
     // =================================================
     // WATCHDOG
@@ -3492,8 +3849,8 @@ void setup()
     );
 
     WiFi.begin(
-        ssid,
-        pass
+        WIFI_SSID,
+        WIFI_PASSWORD
     );
 
     // =================================================
@@ -3501,7 +3858,7 @@ void setup()
     // =================================================
 
     Blynk.config(
-        auth
+        BLYNK_AUTH_TOKEN
     );
 
     Serial.println(
@@ -3509,8 +3866,40 @@ void setup()
     );
 
     // =================================================
+    // MQTT
+    // =================================================
+
+    mqttSecureClient.setCACert(
+        HIVEMQ_ROOT_CA
+    );
+
+    mqttClient.setServer(
+        MQTT_BROKER_HOST,
+        MQTT_PORT
+    );
+
+    mqttClient.setCallback(
+        mqttCallback
+    );
+
+    mqttClient.setKeepAlive(
+        MQTT_KEEP_ALIVE_SECONDS
+    );
+
+    mqttClient.setSocketTimeout(
+        MQTT_SOCKET_TIMEOUT_SECONDS
+    );
+
+    mqttClient.setBufferSize(
+        MQTT_BUFFER_SIZE
+    );
+
+    Serial.println(
+        "[SYSTEM] MQTT TLS configured"
+    );
+
+    // =================================================
     // SENSOR TASK
-    // Core 1 / Priority 3
     // =================================================
 
     BaseType_t result =
@@ -3524,13 +3913,7 @@ void setup()
             1
         );
 
-    if (result == pdPASS)
-    {
-        Serial.println(
-            "[SYSTEM] SensorTask created"
-        );
-    }
-    else
+    if (result != pdPASS)
     {
         Serial.println(
             "[FATAL] SensorTask creation failed"
@@ -3539,7 +3922,6 @@ void setup()
 
     // =================================================
     // CONTROL TASK
-    // Core 1 / Priority 4
     // =================================================
 
     result =
@@ -3553,13 +3935,7 @@ void setup()
             1
         );
 
-    if (result == pdPASS)
-    {
-        Serial.println(
-            "[SYSTEM] ControlTask created"
-        );
-    }
-    else
+    if (result != pdPASS)
     {
         Serial.println(
             "[FATAL] ControlTask creation failed"
@@ -3568,7 +3944,6 @@ void setup()
 
     // =================================================
     // DISPLAY TASK
-    // Core 1 / Priority 1
     // =================================================
 
     result =
@@ -3582,13 +3957,7 @@ void setup()
             1
         );
 
-    if (result == pdPASS)
-    {
-        Serial.println(
-            "[SYSTEM] DisplayTask created"
-        );
-    }
-    else
+    if (result != pdPASS)
     {
         Serial.println(
             "[FATAL] DisplayTask creation failed"
@@ -3597,7 +3966,6 @@ void setup()
 
     // =================================================
     // NETWORK TASK
-    // Core 0 / Priority 2
     // =================================================
 
     result =
@@ -3611,13 +3979,7 @@ void setup()
             0
         );
 
-    if (result == pdPASS)
-    {
-        Serial.println(
-            "[SYSTEM] NetworkTask created"
-        );
-    }
-    else
+    if (result != pdPASS)
     {
         Serial.println(
             "[FATAL] NetworkTask creation failed"
@@ -3626,7 +3988,6 @@ void setup()
 
     // =================================================
     // WATCHDOG TASK
-    // Core 0 / Priority 5
     // =================================================
 
     result =
@@ -3640,13 +4001,7 @@ void setup()
             0
         );
 
-    if (result == pdPASS)
-    {
-        Serial.println(
-            "[SYSTEM] WatchdogTask created"
-        );
-    }
-    else
+    if (result != pdPASS)
     {
         Serial.println(
             "[FATAL] WatchdogTask creation failed"
@@ -3655,7 +4010,6 @@ void setup()
 
     // =================================================
     // CLI TASK
-    // Core 0 / Priority 2
     // =================================================
 
     result =
@@ -3669,13 +4023,7 @@ void setup()
             0
         );
 
-    if (result == pdPASS)
-    {
-        Serial.println(
-            "[SYSTEM] CliTask created"
-        );
-    }
-    else
+    if (result != pdPASS)
     {
         Serial.println(
             "[FATAL] CliTask creation failed"
@@ -3697,7 +4045,7 @@ void setup()
     );
 
     Serial.println(
-        "[SYSTEM] Measurement pipeline active"
+        "[SYSTEM] Measurement abstraction active"
     );
 
     Serial.println(
@@ -3709,19 +4057,23 @@ void setup()
     );
 
     Serial.println(
-        "[SYSTEM] Diagnostics active"
-    );
-
-    Serial.println(
         "[SYSTEM] Watchdog active"
     );
 
     Serial.println(
-        "[SYSTEM] Recovery supervisor active"
+        "[SYSTEM] Blynk telemetry active"
     );
 
     Serial.println(
-        "[SYSTEM] UART CLI active"
+        "[SYSTEM] MQTT TLS active"
+    );
+
+    Serial.println(
+        "[SYSTEM] MQTT command interface active"
+    );
+
+    Serial.println(
+        "[SYSTEM] NTP synchronization active"
     );
 
     Serial.println(
@@ -3735,12 +4087,7 @@ void setup()
 
 void loop()
 {
-    // All application functionality runs
-    // inside FreeRTOS tasks.
-
     vTaskDelay(
-        pdMS_TO_TICKS(
-            1000
-        )
+        pdMS_TO_TICKS(1000)
     );
 }
