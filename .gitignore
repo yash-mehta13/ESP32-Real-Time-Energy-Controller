@@ -2,11 +2,11 @@
 # Secrets
 # =====================================================
 
-firmware/config.h
 config.h
 secrets.h
 *.secret
 *.secrets
+.env
 
 # =====================================================
 # Arduino / PlatformIO
