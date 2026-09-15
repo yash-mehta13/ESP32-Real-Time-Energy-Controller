@@ -2,7 +2,7 @@
 
 A production-oriented ESP32 firmware project that combines real-time measurement, threshold-based protection, fail-safe actuation, FreeRTOS task architecture, watchdog supervision, Blynk telemetry, and secure MQTT connectivity through HiveMQ Cloud.
 
-> **Current stage:** Step 8 production firmware / repository hardening  
+> **Current stage:** Step 8 complete — production firmware hardened and verified on real PZEM-004T hardware  
 > **Measurement:** PZEM-004T v3.0 or deterministic simulation  
 > **RTOS:** FreeRTOS through the ESP32 Arduino framework
 
@@ -131,6 +131,17 @@ ESP32-Real-Time-Energy-Controller/
 | Invalid measurement | FAULT | OFF |
 
 Faults are latched. An explicit `reset` command is required to clear them.
+
+## Hardware validation
+
+The firmware has been run against a real PZEM-004T v3.0 sensor and a real load, not only the simulation path. Verified on hardware:
+
+- PZEM voltage/current/power readings checked against a trusted meter.
+- Relay physically opened on a real overload above the fault threshold.
+- Fault `reset`/`ack` commands (CLI and MQTT) confirmed working while running on hardware.
+- Extended run without a crash or watchdog-triggered restart.
+
+`MEASUREMENT_SOURCE` still defaults to `SIMULATION` (see below) — this is a deliberate default for anyone cloning the repo without a PZEM wired up yet, not a sign the hardware path is unverified. Switch it to `PZEM` once your wiring matches the pinout in this README.
 
 ## Measurement source
 
