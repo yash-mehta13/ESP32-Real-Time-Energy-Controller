@@ -45,6 +45,15 @@ Only changes made in this revision are listed; earlier history is in `git log`.
 - Diagrams (`docs/assets/*.svg`), engineering documents, `CLAUDE.md`,
   `CONTRIBUTING.md`, `SECURITY.md`, issue and PR templates, helper scripts.
 
+### Fixed after the first CI run
+- The first CI run (both `pio run` environments, espressif32 8.0.0 /
+  arduino-esp32 3.3.12) failed: the core defines `DISABLED` as a macro in
+  `esp32-hal-gpio.h`, which broke the `RelayOutputMode::DISABLED` enum
+  member. Members renamed to `HOLD_OFF` / `FOLLOW_STATE`. The host build now
+  force-includes `test/native/arduino_macros.h` (the core's global macros) so
+  such collisions fail `make test` too.
+- `diagnostics.cpp`: `%u` used for a `uint32_t` (`-Wformat` warning in CI).
+
 ### Verification performed for this revision
 - `make test`: 87 tests, 0 failed (host, g++ `-Wall -Wextra -Werror -pedantic`).
 - Mutation spot-checks: re-introducing the original defects (lock-failure
@@ -57,6 +66,6 @@ Only changes made in this revision are listed; earlier history is in `git log`.
   not a firmware build. The `#error` / `static_assert` guards were exercised
   with g++.
 - `scripts/check_docs.py` and `scripts/scan_secrets.py` pass.
-- **Not run:** `pio run` for either environment (the PlatformIO registry host
-  was not reachable from the preparation environment), any ESP32 hardware,
-  any MQTT or Blynk connection.
+- **Not run locally:** `pio run` (the PlatformIO registry host was not
+  reachable from the preparation environment); firmware builds are verified
+  only by CI. No ESP32 hardware, MQTT or Blynk connection was used.

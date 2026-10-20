@@ -37,7 +37,7 @@
 <text x="1058.0" y="295.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >sim build: relay pin held OFF</text>
 <polyline points="1058,206 1058,240" fill="none" stroke="#b91c1c" stroke-width="2" marker-end="url(#ahb91c1c)"/>
 <g stroke="#b91c1c" stroke-width="3"><line x1="320" y1="337" x2="338" y2="355"/><line x1="338" y1="337" x2="320" y2="355"/></g>
-<text x="350" y="351" font-size="12" font-weight="bold" text-anchor="start" fill="#b91c1c" >Simulated values never close the relay pin (RelayOutputMode::DISABLED)</text>
+<text x="350" y="351" font-size="12" font-weight="bold" text-anchor="start" fill="#b91c1c" >Simulated values never close the relay pin (RelayOutputMode::HOLD_OFF)</text>
 <rect x="470" y="262" width="140" height="52" rx="8" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
 <text x="540.0" y="281.0" font-size="13.5" font-weight="bold" text-anchor="middle" fill="#111827" >DisplayTask</text>
 <text x="540.0" y="299.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >reads snapshots, 500 ms</text>

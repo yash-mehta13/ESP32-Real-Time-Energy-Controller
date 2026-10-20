@@ -184,7 +184,8 @@ void diagnosticsPrintVersion()
                   measurementSourceName(activeMeasurementSource()));
     Serial.printf("Relay output     : %s\n",
                   actuatorRelayOutputEnabled() ? "ENABLED" : "DISABLED (simulation)");
-    Serial.printf("CPU              : %u MHz\n", getCpuFrequencyMhz());
+    Serial.printf("CPU              : %lu MHz\n",
+                  static_cast<unsigned long>(getCpuFrequencyMhz()));
     Serial.printf("Free Heap        : %lu bytes\n",
                   (unsigned long)ESP.getFreeHeap());
     Serial.printf("Minimum Free Heap: %lu bytes\n",

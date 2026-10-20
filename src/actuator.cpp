@@ -66,7 +66,7 @@ bool actuatorRelayCommandedOn()
 
 bool actuatorRelayOutputEnabled()
 {
-    return kRelayOutputMode == RelayOutputMode::ENABLED;
+    return kRelayOutputMode == RelayOutputMode::FOLLOW_STATE;
 }
 
 uint32_t actuatorReadbackMismatches()

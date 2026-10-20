@@ -712,7 +712,7 @@ void setup()
     Serial.printf(" Firmware %s | %s\n", FIRMWARE_VERSION, FIRMWARE_BUILD);
     Serial.printf(" Measurement source: %s | Relay GPIO output: %s\n",
                   measurementSourceName(kMeasurementSource),
-                  kRelayOutputMode == RelayOutputMode::ENABLED
+                  kRelayOutputMode == RelayOutputMode::FOLLOW_STATE
                       ? "ENABLED" : "DISABLED (simulation)");
     Serial.println("==========================================");
 

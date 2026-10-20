@@ -33,7 +33,7 @@ Build status of the received tree: not reproducible from the repository alone
 | 1 | **Protection lock failure left the relay ON.** `protectionUpdate()` returned `FAULT` with `stateChanged == faultChanged == false` when the mutex could not be taken, and `applyProtectionResult()` only drove the actuator when one of those flags was set. | High | Lock failure returns a dedicated fail-closed result (`synchronizationFailed`, state FAULT, `PROTECTION_INTERNAL`); the actuator is driven on every result; the next successful call latches the internal fault. | `lock_failure_result_is_fault_with_safe_outputs_even_if_flags_ignored`, `internal_fault_*` |
 | 2 | **Reset could re-energise the load while the hazard persisted.** `protectionReset()` cleared the fault unconditionally. The next sample above 550 W started the confirmation timer and the state became WARNING, which switches the relay ON for up to 2 s. | High | Reset is refused unless a fresh valid sample shows power at or below the fault threshold; after an accepted reset the first sample may not open a confirmation window (immediate re-latch). | `reset_rejected_*`, `after_reset_overpower_relatches_immediately_without_warning_window` |
 | 3 | **Same re-energise window after boot** (watchdog restart, brownout) with an overload already present. | Medium | Same first-sample rule applied at `begin()` and after mains returns. | `boot_with_overpower_present_latches_immediately`, `mains_returning_onto_overload_latches_immediately` |
-| 4 | **Simulation could drive the real relay.** The default configuration selects simulation, and `actuatorApplyState()` wrote the relay GPIO regardless of source. | High | Source is selected by a PlatformIO environment; simulation builds use `RelayOutputMode::DISABLED`, so the relay pin only ever receives its OFF level. `#error` guards reject ambiguous flags. | `simulation_mode_never_drives_the_relay_pin_on` |
+| 4 | **Simulation could drive the real relay.** The default configuration selects simulation, and `actuatorApplyState()` wrote the relay GPIO regardless of source. | High | Source is selected by a PlatformIO environment; simulation builds use `RelayOutputMode::HOLD_OFF`, so the relay pin only ever receives its OFF level. `#error` guards reject ambiguous flags. | `simulation_mode_never_drives_the_relay_pin_on` |
 | 5 | **Stale data accepted indefinitely.** ControlTask only reacted when a sample arrived; if SensorTask stalled the last state (possibly relay ON) persisted until the watchdog fired. | Medium | `ProtectionCore::tick()` runs every control loop; no usable sample for 3 s latches `SENSOR_STALE`. Samples older than 3 s are rejected. | `silence_is_detected_by_tick`, `stale_sample_latches_stale_fault` |
 | 6 | **Invalid values could be fabricated.** Derived values collapsed to 0 on bad input and the zero-initialised `Measurement{}` had `status` implicitly OK. Power factor was recomputed as P/S and clamped, hiding inconsistency. | Medium | Explicit status enum (default NOT_INITIALIZED), numeric fields zeroed on invalid, meter power factor used, plausibility and P-versus-S consistency checks. | `test_measurement.cpp` |
 | 7 | **`relay_on` in telemetry and CLI looked like a physical fact.** No contact feedback exists. | Low | Renamed `relay_commanded_on`, added `relay_output_enabled`; documented. | `telemetry_contains_source_validity_and_commanded_relay` |
@@ -66,7 +66,11 @@ Build status of the received tree: not reproducible from the repository alone
   (all of `src/*.cpp`) were only syntax-checked against hand-written SDK
   stubs and the real PZEM header. Run `pio run -e
   esp32dev_sim -e esp32dev_pzem` (CI does this) before relying on them.
-- Toolchain versions are not pinned. `watchdog_manager.cpp` needs the
+- The first CI firmware build exposed a macro collision (`DISABLED` from the
+  arduino-esp32 core) that the stub-based syntax check could not see; fixed,
+  and the host build now includes the core's global macros.
+- Toolchain versions are not pinned (CI resolved espressif32 8.0.0 /
+  arduino-esp32 3.3.12). `watchdog_manager.cpp` needs the
   arduino-esp32 3.x API (a compile-time guard states this). Pin the platform
   after the first green CI run.
 - Fault state is RAM only: a reset clears the latch (mitigated by the

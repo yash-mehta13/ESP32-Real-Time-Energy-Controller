@@ -6,7 +6,7 @@
 
 CXX      ?= g++
 CXXFLAGS ?= -std=c++11 -Wall -Wextra -Werror -pedantic -O1 -g
-INCLUDES := -Ilib/energy_core/src -Itest/native
+INCLUDES := -Ilib/energy_core/src -Itest/native -include test/native/arduino_macros.h
 CORE_SRC := $(wildcard lib/energy_core/src/*.cpp)
 TEST_SRC := $(wildcard test/native/*.cpp)
 BIN      := build/native_tests

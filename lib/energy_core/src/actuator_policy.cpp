@@ -14,7 +14,7 @@ OutputCommand outputsForState(SystemState state)
 
 bool relayPinDrivenOn(bool commandedOn, RelayOutputMode mode)
 {
-    return commandedOn && mode == RelayOutputMode::ENABLED;
+    return commandedOn && mode == RelayOutputMode::FOLLOW_STATE;
 }
 
 int relayLevel(bool drivenOn, int onLevel, int offLevel)

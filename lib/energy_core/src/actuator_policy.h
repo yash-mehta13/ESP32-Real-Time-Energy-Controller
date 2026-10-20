@@ -5,12 +5,14 @@
 #include "protection_core.h"
 
 // Whether the relay GPIO may ever be driven to its "ON" level in this build.
-// SIMULATION builds use DISABLED so simulated power values can never close a
+// SIMULATION builds use HOLD_OFF so simulated power values can never close a
 // real relay; the relay pin is held at its OFF level instead.
+// Member names deliberately avoid DISABLED/ENABLED: the arduino-esp32 core
+// defines DISABLED as a macro (esp32-hal-gpio.h), which breaks the enum.
 enum class RelayOutputMode : uint8_t
 {
-    DISABLED = 0,
-    ENABLED
+    HOLD_OFF = 0,   // relay pin always driven to its OFF level
+    FOLLOW_STATE    // relay pin follows the protection state
 };
 
 struct OutputCommand

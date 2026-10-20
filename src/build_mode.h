@@ -15,16 +15,16 @@
 #elif defined(ENERGY_SOURCE_PZEM)
 constexpr MeasurementSource kMeasurementSource = MeasurementSource::PZEM;
 #  if defined(ENERGY_RELAY_OUTPUT_DISABLE)
-constexpr RelayOutputMode kRelayOutputMode = RelayOutputMode::DISABLED;  // bench: meter only
+constexpr RelayOutputMode kRelayOutputMode = RelayOutputMode::HOLD_OFF;  // bench: meter only
 #  else
-constexpr RelayOutputMode kRelayOutputMode = RelayOutputMode::ENABLED;
+constexpr RelayOutputMode kRelayOutputMode = RelayOutputMode::FOLLOW_STATE;
 #  endif
 #elif defined(ENERGY_SOURCE_SIMULATION)
 #  if defined(ENERGY_RELAY_OUTPUT_ENABLE)
 #  error "Simulated measurements must never drive the relay output"
 #  endif
 constexpr MeasurementSource kMeasurementSource = MeasurementSource::SIMULATION;
-constexpr RelayOutputMode kRelayOutputMode = RelayOutputMode::DISABLED;
+constexpr RelayOutputMode kRelayOutputMode = RelayOutputMode::HOLD_OFF;
 #else
 #error "Select a build environment: esp32dev_sim or esp32dev_pzem (see platformio.ini)"
 #endif

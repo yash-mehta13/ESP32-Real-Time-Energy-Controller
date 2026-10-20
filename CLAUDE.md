@@ -30,7 +30,7 @@ python3 scripts/scan_secrets.py             # credential heuristics
 ## Rules that must not be broken
 
 1. Simulation builds must never drive the relay pin to its ON level
-   (`RelayOutputMode::DISABLED`). Do not add a path around `build_mode.h`.
+   (`RelayOutputMode::HOLD_OFF`). Do not add a path around `build_mode.h`.
 2. Only `src/actuator.cpp` writes relay/LED GPIOs. MQTT callbacks, CLI and
    display never touch GPIO or protection state directly.
 3. Every protection result drives the actuator (`actuatorApplyResult`), not

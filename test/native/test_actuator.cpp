@@ -46,14 +46,14 @@ TEST(simulation_mode_never_drives_the_relay_pin_on)
     for (int s = 0; s < 4; ++s)
     {
         const bool commanded = outputsForState(static_cast<SystemState>(s)).relayCommandedOn;
-        CHECK(!relayPinDrivenOn(commanded, RelayOutputMode::DISABLED));
+        CHECK(!relayPinDrivenOn(commanded, RelayOutputMode::HOLD_OFF));
     }
 }
 
 TEST(hardware_mode_follows_command)
 {
-    CHECK(relayPinDrivenOn(true, RelayOutputMode::ENABLED));
-    CHECK(!relayPinDrivenOn(false, RelayOutputMode::ENABLED));
+    CHECK(relayPinDrivenOn(true, RelayOutputMode::FOLLOW_STATE));
+    CHECK(!relayPinDrivenOn(false, RelayOutputMode::FOLLOW_STATE));
 }
 
 TEST(active_low_polarity_mapping)

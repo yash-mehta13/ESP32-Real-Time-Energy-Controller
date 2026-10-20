@@ -40,7 +40,7 @@ protection path independent of the network.
 |---|---|
 | Implemented | Yes (see highlights) |
 | Host unit tests | 87 tests, `make test` - decision logic only |
-| ESP32 firmware build | CI workflow builds `esp32dev_sim` and `esp32dev_pzem`; it has **not been run yet** and `pio run` was not possible in the environment where this revision was prepared (see [CHANGELOG](CHANGELOG.md)) |
+| ESP32 firmware build | Built by CI for `esp32dev_sim` and `esp32dev_pzem` (espressif32 8.0.0, arduino-esp32 3.3.12); see the latest workflow run for current status |
 | Author-reported hardware validation | PZEM readings compared with a trusted meter, relay opening on overload, CLI/MQTT reset/ack, extended run - **no committed records** |
 | Independently reproducible hardware evidence | None committed yet |
 | Known gaps | No relay feedback, fault latch not persisted, relay safe-state during reset is hardware-dependent, no license, toolchain not pinned ([roadmap](docs/roadmap.md)) |
@@ -169,7 +169,7 @@ topics. See [docs/security-and-privacy.md](docs/security-and-privacy.md).
 ## Testing and CI
 
 - `make test` - host unit tests (`g++ -Wall -Wextra -Werror`).
-- `.github/workflows/ci.yml` (not yet executed) - host tests, both firmware environments with a
+- `.github/workflows/ci.yml` - host tests, both firmware environments with a
   placeholder `config.h`, link check and secret scan. No credentials, network
   services or hardware are needed.
 - Procedure and evidence levels: [docs/test-procedure.md](docs/test-procedure.md).
