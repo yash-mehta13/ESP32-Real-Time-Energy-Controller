@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Arduino.h>
+
 // Copy this file to src/config.h and fill in your own credentials.
 // src/config.h is intentionally ignored by Git.
 //
@@ -26,29 +28,21 @@ constexpr char MQTT_PASSWORD[] = "YOUR_MQTT_PASSWORD";
 // -----------------------------------------------------------------------------
 
 constexpr uint16_t MQTT_PORT = 8883;
-constexpr char MQTT_DEVICE_ID[] = "device01";
+
+// One MQTT topic level: 1-32 characters of [A-Za-z0-9_-]. This must stay a
+// macro: every MQTT topic below is derived from it at compile time (see
+// lib/energy_core/src/energy_topics.h), so topics cannot drift from the ID.
+#define MQTT_DEVICE_ID "device01"
 
 constexpr uint32_t MQTT_RECONNECT_INTERVAL_MS = 5000;
 
-// -----------------------------------------------------------------------------
-// MQTT topic namespace
-// -----------------------------------------------------------------------------
+// MQTT topics are derived from MQTT_DEVICE_ID (energy_topics.h), e.g.
+// energy/device01/telemetry. Grant the broker account only that subtree.
+#include "energy_topics.h"
 
-// Topics intentionally remain device-specific and narrow.
-// Do not grant the MQTT account broad '#' permissions.
-
-constexpr char MQTT_TOPIC_TELEMETRY[] =
-    "energy/device01/telemetry";
-constexpr char MQTT_TOPIC_STATE[] =
-    "energy/device01/status/state";
-constexpr char MQTT_TOPIC_FAULT[] =
-    "energy/device01/fault/code";
-constexpr char MQTT_TOPIC_AVAILABILITY[] =
-    "energy/device01/status/availability";
-constexpr char MQTT_TOPIC_CMD_RESET[] =
-    "energy/device01/cmd/reset";
-constexpr char MQTT_TOPIC_CMD_ACK[] =
-    "energy/device01/cmd/ack";
+// Commands received this long after (re)subscribing are dropped, because a
+// retained command would be delivered immediately on subscribe.
+constexpr uint32_t MQTT_COMMAND_HOLDOFF_MS = 2000;
 
 // -----------------------------------------------------------------------------
 // Firmware metadata
@@ -56,9 +50,9 @@ constexpr char MQTT_TOPIC_CMD_ACK[] =
 
 constexpr char FIRMWARE_NAME[] =
     "ESP32 Real-Time Energy Controller";
-constexpr char FIRMWARE_VERSION[] = "1.2.0";
+constexpr char FIRMWARE_VERSION[] = "1.3.0";
 constexpr char FIRMWARE_BUILD[] =
-    "STEP-8-PRODUCTION-FIRMWARE";
+    "SAFETY-HARDENING-1";
 
 // -----------------------------------------------------------------------------
 // Hardware
@@ -73,7 +67,8 @@ constexpr uint8_t LED_ALERT_PIN = 19;
 
 // Fail-safe relay control.
 // Change this pin to match the actual relay driver circuit.
-// The software assumes an active-low relay module by default.
+// The software assumes an active-low relay module by default. Verify the
+// polarity of YOUR module with no load connected before enabling real output.
 constexpr uint8_t RELAY_PIN = 23;
 constexpr uint8_t RELAY_ON_LEVEL = LOW;
 constexpr uint8_t RELAY_OFF_LEVEL = HIGH;
@@ -86,10 +81,11 @@ constexpr uint8_t LCD_ROWS = 2;
 // Measurement source
 // -----------------------------------------------------------------------------
 
-// 0 = real PZEM, 1 = deterministic simulation
-constexpr uint8_t MEASUREMENT_SOURCE = 1;
-
-// Change to 0 when the real PZEM is connected.
+// The measurement source is NOT configured here. It is selected by the
+// PlatformIO environment so that it cannot disagree with the build:
+//   pio run -e esp32dev_sim    deterministic simulation, relay pin held OFF
+//   pio run -e esp32dev_pzem   real PZEM-004T v3.0 + real relay output
+// See src/build_mode.h.
 
 // -----------------------------------------------------------------------------
 // Protection
@@ -98,6 +94,17 @@ constexpr uint8_t MEASUREMENT_SOURCE = 1;
 constexpr float POWER_WARNING_THRESHOLD_W = 485.0f;
 constexpr float POWER_FAULT_THRESHOLD_W = 550.0f;
 constexpr uint32_t FAULT_CONFIRM_TIME_MS = 2000;
+
+// Voltage at or below this is treated as "no mains": state INIT, relay OFF.
+constexpr float MIN_OPERATING_VOLTAGE_V = 10.0f;
+
+// A sample older than this is not trusted. ProtectionCore latches
+// SENSOR_STALE when no usable sample arrives for this long. Keep it above
+// SENSOR_PERIOD_MS plus the worst-case PZEM read time.
+constexpr uint32_t MAX_MEASUREMENT_AGE_MS = 3000;
+
+// How long ControlTask may wait for the protection mutex.
+constexpr uint32_t PROTECTION_LOCK_TIMEOUT_MS = 50;
 
 // -----------------------------------------------------------------------------
 // RTOS timing
@@ -134,6 +141,7 @@ constexpr uint8_t CLI_TASK_PRIORITY = 2;
 // Watchdog
 // -----------------------------------------------------------------------------
 
+// Task watchdog (hardware-backed reset) and application heartbeat limits.
 constexpr uint32_t WATCHDOG_TIMEOUT_MS = 8000;
 constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 6000;
 constexpr uint32_t WATCHDOG_STARTUP_GRACE_MS = 10000;

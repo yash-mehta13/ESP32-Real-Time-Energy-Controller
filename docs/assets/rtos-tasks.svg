@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 560" width="1180" height="560" font-family="Helvetica, Arial, DejaVu Sans, sans-serif" role="img" aria-labelledby="t d"><title id="t">FreeRTOS task architecture</title><desc id="d">Six tasks with core, priority and period, plus the queues and shared data that connect them.</desc><defs><marker id="ah4b5563" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4b5563"/></marker><marker id="ah374151" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker><marker id="ah15803d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker><marker id="ah6d28d9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/></marker><marker id="ahc2410c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/></marker><marker id="ahb91c1c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/></marker><marker id="ah1d4ed8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker></defs><rect width="1180" height="560" fill="#ffffff"/><text x="24" y="36" font-size="20" font-weight="bold" text-anchor="start" fill="#111827" >FreeRTOS task architecture</text>
+<text x="24" y="58" font-size="12.5" font-weight="normal" text-anchor="start" fill="#4b5563" >Values from src/config.example.h and src/main.cpp. Stack sizes are bytes passed to xTaskCreatePinnedToCore.</text>
+<rect x="24" y="84" width="680" height="30" fill="#111827"/>
+<text x="36" y="104" font-size="13" font-weight="bold" text-anchor="start" fill="#ffffff" >Task</text>
+<text x="190" y="104" font-size="13" font-weight="bold" text-anchor="start" fill="#ffffff" >Core / priority</text>
+<text x="280" y="104" font-size="13" font-weight="bold" text-anchor="start" fill="#ffffff" >Stack</text>
+<text x="350" y="104" font-size="13" font-weight="bold" text-anchor="start" fill="#ffffff" >Period</text>
+<text x="440" y="104" font-size="13" font-weight="bold" text-anchor="start" fill="#ffffff" >Role</text>
+<rect x="24" y="114" width="680" height="54" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+<text x="36" y="146" font-size="14.5" font-weight="bold" text-anchor="start" fill="#111827" >SensorTask</text>
+<text x="190" y="146" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >core 1 / 3</text>
+<text x="280" y="146" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >4096</text>
+<text x="350" y="146" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >1000 ms</text>
+<text x="440" y="146" font-size="12.5" font-weight="normal" text-anchor="start" fill="#111827" >read source, validate, enqueue</text>
+<rect x="24" y="168" width="680" height="54" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+<text x="36" y="200" font-size="14.5" font-weight="bold" text-anchor="start" fill="#111827" >ControlTask</text>
+<text x="190" y="200" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >core 1 / 4</text>
+<text x="280" y="200" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >4096</text>
+<text x="350" y="200" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >100 ms</text>
+<text x="440" y="200" font-size="12.5" font-weight="normal" text-anchor="start" fill="#111827" >protection + actuator + commands</text>
+<rect x="24" y="222" width="680" height="54" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+<text x="36" y="254" font-size="14.5" font-weight="bold" text-anchor="start" fill="#111827" >DisplayTask</text>
+<text x="190" y="254" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >core 1 / 1</text>
+<text x="280" y="254" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >4096</text>
+<text x="350" y="254" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >500 ms</text>
+<text x="440" y="254" font-size="12.5" font-weight="normal" text-anchor="start" fill="#111827" >LCD from snapshots</text>
+<rect x="24" y="276" width="680" height="54" fill="#ffedd5" stroke="#c2410c" stroke-width="1.5"/>
+<text x="36" y="308" font-size="14.5" font-weight="bold" text-anchor="start" fill="#111827" >NetworkTask</text>
+<text x="190" y="308" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >core 0 / 2</text>
+<text x="280" y="308" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >6144</text>
+<text x="350" y="308" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >10 ms</text>
+<text x="440" y="308" font-size="12.5" font-weight="normal" text-anchor="start" fill="#111827" >Wi-Fi, NTP, Blynk, MQTT</text>
+<rect x="24" y="330" width="680" height="54" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.5"/>
+<text x="36" y="362" font-size="14.5" font-weight="bold" text-anchor="start" fill="#111827" >WatchdogTask</text>
+<text x="190" y="362" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >core 0 / 5</text>
+<text x="280" y="362" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >4096</text>
+<text x="350" y="362" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >1000 ms</text>
+<text x="440" y="362" font-size="12.5" font-weight="normal" text-anchor="start" fill="#111827" >heartbeat supervisor</text>
+<rect x="24" y="384" width="680" height="54" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.5"/>
+<text x="36" y="416" font-size="14.5" font-weight="bold" text-anchor="start" fill="#111827" >CliTask</text>
+<text x="190" y="416" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >core 0 / 2</text>
+<text x="280" y="416" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >4096</text>
+<text x="350" y="416" font-size="13" font-weight="normal" text-anchor="start" fill="#111827" >20 ms</text>
+<text x="440" y="416" font-size="12.5" font-weight="normal" text-anchor="start" fill="#111827" >serial diagnostics</text>
+<text x="24" y="456" font-size="12" font-weight="normal" text-anchor="start" fill="#4b5563" >Blue: local control path. Orange: network. Purple: supervision/diagnostics.</text>
+<text x="24" y="476" font-size="12" font-weight="normal" text-anchor="start" fill="#4b5563" >ESP-IDF task watchdog: 8000 ms, panic on trigger. Heartbeat limit: 6000 ms after a 10 s start-up grace.</text>
+<text x="24" y="496" font-size="12" font-weight="normal" text-anchor="start" fill="#4b5563" >Every task registers with the task watchdog and reports an application heartbeat each loop.</text>
+<text x="24" y="516" font-size="12" font-weight="normal" text-anchor="start" fill="#4b5563" >On a stale heartbeat WatchdogTask drives the safe output and calls esp_restart().</text>
+<text x="740" y="96" font-size="15" font-weight="bold" text-anchor="start" fill="#111827" >Queues and shared data</text>
+<rect x="740" y="112" width="416" height="62" rx="6" fill="#f9fafb" stroke="#9ca3af"/>
+<text x="752" y="134" font-size="13" font-weight="bold" text-anchor="start" fill="#111827" >measurementQueue (5)</text>
+<text x="752" y="152" font-size="11.5" font-weight="normal" text-anchor="start" fill="#374151" >Sensor -&gt; Control. Send waits 50 ms; on full the new sample is</text>
+<text x="752" y="166" font-size="11.5" font-weight="normal" text-anchor="start" fill="#374151" >dropped and logged.</text>
+<rect x="740" y="182" width="416" height="62" rx="6" fill="#f9fafb" stroke="#9ca3af"/>
+<text x="752" y="204" font-size="13" font-weight="bold" text-anchor="start" fill="#111827" >commandQueue (8)</text>
+<text x="752" y="222" font-size="11.5" font-weight="normal" text-anchor="start" fill="#374151" >CLI (50 ms wait) and MQTT callback (no wait) -&gt; Control. Full</text>
+<text x="752" y="236" font-size="11.5" font-weight="normal" text-anchor="start" fill="#374151" >= dropped, logged.</text>
+<rect x="740" y="252" width="416" height="62" rx="6" fill="#f9fafb" stroke="#9ca3af"/>
+<text x="752" y="274" font-size="13" font-weight="bold" text-anchor="start" fill="#111827" >latestMeasurement</text>
+<text x="752" y="292" font-size="11.5" font-weight="normal" text-anchor="start" fill="#374151" >Sensor writes; Display, Network, CLI copy under a mutex (50</text>
+<text x="752" y="306" font-size="11.5" font-weight="normal" text-anchor="start" fill="#374151" >ms).</text>
+<rect x="740" y="322" width="416" height="62" rx="6" fill="#f9fafb" stroke="#9ca3af"/>
+<text x="752" y="344" font-size="13" font-weight="bold" text-anchor="start" fill="#111827" >Protection state</text>
+<text x="752" y="362" font-size="11.5" font-weight="normal" text-anchor="start" fill="#374151" >Owned by ProtectionCore. Mutex (50 ms); lock failure -&gt; fail</text>
+<text x="752" y="376" font-size="11.5" font-weight="normal" text-anchor="start" fill="#374151" >closed.</text>
+<rect x="740" y="392" width="416" height="62" rx="6" fill="#f9fafb" stroke="#9ca3af"/>
+<text x="752" y="414" font-size="13" font-weight="bold" text-anchor="start" fill="#111827" >Heartbeat table</text>
+<text x="752" y="432" font-size="11.5" font-weight="normal" text-anchor="start" fill="#374151" >Short critical section; all tasks write, WatchdogTask reads.</text>
+<rect x="740" y="462" width="416" height="62" rx="6" fill="#f9fafb" stroke="#9ca3af"/>
+<text x="752" y="484" font-size="13" font-weight="bold" text-anchor="start" fill="#111827" >Network flags</text>
+<text x="752" y="502" font-size="11.5" font-weight="normal" text-anchor="start" fill="#374151" >std::atomic&lt;bool&gt;: written by Network, read by CLI.</text>
+<text x="1156" y="548" font-size="11" font-weight="normal" text-anchor="end" fill="#6b7280" >Conceptual diagram derived from the source.</text></svg>

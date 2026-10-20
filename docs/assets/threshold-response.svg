@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 560" width="1180" height="560" font-family="Helvetica, Arial, DejaVu Sans, sans-serif" role="img" aria-labelledby="t d"><title id="t">Conceptual threshold response</title><desc id="d">Illustrative power trace crossing the 485 W warning and 550 W fault thresholds with a 2 second confirmation window, and the resulting relay state. Not recorded data.</desc><defs><marker id="ah4b5563" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4b5563"/></marker><marker id="ah374151" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker><marker id="ah15803d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker><marker id="ah6d28d9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/></marker><marker id="ahc2410c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/></marker><marker id="ahb91c1c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/></marker><marker id="ah1d4ed8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker></defs><rect width="1180" height="560" fill="#ffffff"/><text x="24" y="36" font-size="20" font-weight="bold" text-anchor="start" fill="#111827" >Threshold response (conceptual example)</text>
+<text x="24" y="58" font-size="13" font-weight="bold" text-anchor="start" fill="#b91c1c" >ILLUSTRATION ONLY. The trace is invented to explain the policy; it is not a measurement or test result.</text>
+<rect x="110" y="100" width="990" height="300" fill="#f9fafb" stroke="#9ca3af"/>
+<line x1="110" y1="400.0" x2="1100" y2="400.0" stroke="#e5e7eb"/>
+<text x="102" y="404.0" font-size="11.5" font-weight="normal" text-anchor="end" fill="#4b5563" >0</text>
+<line x1="110" y1="357.14285714285717" x2="1100" y2="357.14285714285717" stroke="#e5e7eb"/>
+<text x="102" y="361.14285714285717" font-size="11.5" font-weight="normal" text-anchor="end" fill="#4b5563" >100</text>
+<line x1="110" y1="314.2857142857143" x2="1100" y2="314.2857142857143" stroke="#e5e7eb"/>
+<text x="102" y="318.2857142857143" font-size="11.5" font-weight="normal" text-anchor="end" fill="#4b5563" >200</text>
+<line x1="110" y1="271.42857142857144" x2="1100" y2="271.42857142857144" stroke="#e5e7eb"/>
+<text x="102" y="275.42857142857144" font-size="11.5" font-weight="normal" text-anchor="end" fill="#4b5563" >300</text>
+<line x1="110" y1="228.57142857142858" x2="1100" y2="228.57142857142858" stroke="#e5e7eb"/>
+<text x="102" y="232.57142857142858" font-size="11.5" font-weight="normal" text-anchor="end" fill="#4b5563" >400</text>
+<line x1="110" y1="185.71428571428572" x2="1100" y2="185.71428571428572" stroke="#e5e7eb"/>
+<text x="102" y="189.71428571428572" font-size="11.5" font-weight="normal" text-anchor="end" fill="#4b5563" >500</text>
+<line x1="110" y1="142.8571428571429" x2="1100" y2="142.8571428571429" stroke="#e5e7eb"/>
+<text x="102" y="146.8571428571429" font-size="11.5" font-weight="normal" text-anchor="end" fill="#4b5563" >600</text>
+<line x1="110" y1="100.0" x2="1100" y2="100.0" stroke="#e5e7eb"/>
+<text x="102" y="104.0" font-size="11.5" font-weight="normal" text-anchor="end" fill="#4b5563" >700</text>
+<line x1="110.0" y1="400" x2="110.0" y2="405" stroke="#4b5563"/>
+<text x="110.0" y="420" font-size="11.5" font-weight="normal" text-anchor="middle" fill="#4b5563" >0</text>
+<line x1="275.0" y1="400" x2="275.0" y2="405" stroke="#4b5563"/>
+<text x="275.0" y="420" font-size="11.5" font-weight="normal" text-anchor="middle" fill="#4b5563" >2</text>
+<line x1="440.0" y1="400" x2="440.0" y2="405" stroke="#4b5563"/>
+<text x="440.0" y="420" font-size="11.5" font-weight="normal" text-anchor="middle" fill="#4b5563" >4</text>
+<line x1="605.0" y1="400" x2="605.0" y2="405" stroke="#4b5563"/>
+<text x="605.0" y="420" font-size="11.5" font-weight="normal" text-anchor="middle" fill="#4b5563" >6</text>
+<line x1="770.0" y1="400" x2="770.0" y2="405" stroke="#4b5563"/>
+<text x="770.0" y="420" font-size="11.5" font-weight="normal" text-anchor="middle" fill="#4b5563" >8</text>
+<line x1="935.0" y1="400" x2="935.0" y2="405" stroke="#4b5563"/>
+<text x="935.0" y="420" font-size="11.5" font-weight="normal" text-anchor="middle" fill="#4b5563" >10</text>
+<line x1="1100.0" y1="400" x2="1100.0" y2="405" stroke="#4b5563"/>
+<text x="1100.0" y="420" font-size="11.5" font-weight="normal" text-anchor="middle" fill="#4b5563" >12</text>
+<text x="605.0" y="440" font-size="12.5" font-weight="normal" text-anchor="middle" fill="#374151" >time (s) - conceptual</text>
+<text x="40" y="250.0" font-size="12.5" font-weight="normal" text-anchor="middle" fill="#374151" transform="rotate(-90 40 250.0)">power (W)</text>
+<line x1="110" y1="192.14285714285714" x2="1100" y2="192.14285714285714" stroke="#c2410c" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="1096" y="208.14285714285714" font-size="12" font-weight="normal" text-anchor="end" fill="#c2410c" >warning 485 W (P &gt; 485)</text>
+<line x1="110" y1="164.28571428571428" x2="1100" y2="164.28571428571428" stroke="#b91c1c" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="1096" y="158.28571428571428" font-size="12" font-weight="normal" text-anchor="end" fill="#b91c1c" >fault threshold 550 W (P &gt; 550)</text>
+<rect x="605.0" y="100" width="165.0" height="300" fill="#fecaca" fill-opacity="0.55"/>
+<text x="687.5" y="116" font-size="12" font-weight="bold" text-anchor="middle" fill="#b91c1c" >2 s confirmation</text>
+<polyline points="110.0,237.14285714285717 275.0,237.14285714285717 308.0,215.7142857142857 398.75,215.7142857142857 431.75,177.14285714285714 596.75,177.14285714285714 605.0,142.8571428571429 770.0,142.8571428571429 770.0,142.8571428571429" fill="none" stroke="#1d4ed8" stroke-width="3"/>
+<polyline points="770.0,142.8571428571429 803.0000000000001,314.2857142857143 1100.0,314.2857142857143" fill="none" stroke="#1d4ed8" stroke-width="3" stroke-dasharray="3 5" opacity="0.5"/>
+<text x="192.5" y="227.14285714285717" font-size="12" font-weight="normal" text-anchor="middle" fill="#15803d" >normal</text>
+<text x="514.25" y="213.14285714285714" font-size="12" font-weight="normal" text-anchor="middle" fill="#c2410c" >warning: 485 W &lt; P &lt;= 550 W, relay ON</text>
+<text x="935.0" y="302.2857142857143" font-size="12" font-weight="normal" text-anchor="middle" fill="#b91c1c" >load removed afterwards: the latch stays (dotted, invented)</text>
+<circle cx="770.0" cy="142.8571428571429" r="6" fill="#b91c1c"/>
+<text x="782.0" y="125.71428571428572" font-size="12.5" font-weight="bold" text-anchor="start" fill="#b91c1c" >FAULT latched</text>
+<rect x="110" y="450" width="660.0" height="26" fill="#bbf7d0" stroke="#15803d"/>
+<rect x="770.0" y="450" width="330.0" height="26" fill="#fecaca" stroke="#b91c1c"/>
+<text x="102" y="468" font-size="12" font-weight="normal" text-anchor="end" fill="#374151" >relay command</text>
+<text x="440.0" y="468" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#166534" >ON (NORMAL / WARNING)</text>
+<text x="935.0" y="468" font-size="12.5" font-weight="bold" text-anchor="middle" fill="#991b1b" >OFF until accepted reset</text>
+<text x="24" y="520" font-size="12" font-weight="normal" text-anchor="start" fill="#374151" >Sampling is every 1 s, so the fault latches on the first sample taken at least 2000 ms after the timer starts. Relay stays ON during confirmation.</text>
+<text x="24" y="540" font-size="12" font-weight="normal" text-anchor="start" fill="#374151" >Reset is accepted only with a fresh valid sample at or below 550 W, then returns to INIT (relay OFF) before any restart.</text></svg>

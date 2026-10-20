@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    name: Host unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run tests (g++ -Wall -Wextra -Werror)
+        run: make test
+
+  firmware-build:
+    name: Firmware build (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [esp32dev_sim, esp32dev_pzem]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Create placeholder config.h (no real secrets)
+        run: cp src/config.example.h src/config.h
+      - name: Build
+        run: pio run -e ${{ matrix.env }}
+      - name: Record resolved toolchain and libraries
+        if: always()
+        run: pio pkg list -e ${{ matrix.env }} || true
+
+  repo-hygiene:
+    name: Docs links and secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check Markdown links and image paths
+        run: python3 scripts/check_docs.py
+      - name: Scan tracked files for obvious secrets
+        run: python3 scripts/scan_secrets.py

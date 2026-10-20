@@ -6,7 +6,10 @@
 #include <esp_system.h>
 
 #include "config.h"
+#include "energy_topics.h"
 #include "hivemq_ca.h"
+#include "remote_command.h"
+#include "telemetry_json.h"
 
 namespace
 {
@@ -15,42 +18,45 @@ namespace
 
     QueueHandle_t commandQueue = nullptr;
     bool timeSynchronized = false;
+    uint32_t subscribedAtMs = 0;
 
+    // Runs inside mqttClient.loop() on NetworkTask. It only validates and
+    // enqueues; it never touches GPIO or protection state, and it does no
+    // blocking work (queue send has zero wait).
     void mqttCallback(char* topic, byte* payload, unsigned int length)
     {
-        char message[32]{};
+        const RemoteCommandResult parsed = parseRemoteCommand(
+            topic, payload, length, MQTT_TOPIC_CMD_RESET, MQTT_TOPIC_CMD_ACK);
 
-        const size_t copyLength =
-            min(static_cast<size_t>(length), sizeof(message) - 1U);
-
-        memcpy(message, payload, copyLength);
-        message[copyLength] = '\0';
-
-        CliCommand command{CommandType::NONE};
-
-        if (strcmp(topic, MQTT_TOPIC_CMD_RESET) == 0 &&
-            strcmp(message, "reset") == 0)
+        if (parsed.verdict != RemoteCommandVerdict::ACCEPTED)
         {
-            command.type = CommandType::REMOTE_RESET;
-        }
-        else if (strcmp(topic, MQTT_TOPIC_CMD_ACK) == 0 &&
-                 strcmp(message, "ack") == 0)
-        {
-            command.type = CommandType::REMOTE_ACK;
-        }
-        else
-        {
-            Serial.println("[MQTT] Rejected command");
+            Serial.printf("[MQTT] Rejected command: %s\n",
+                          remoteCommandVerdictName(parsed.verdict));
             return;
         }
 
-        Serial.printf("[MQTT] Command received: %s -> %s\n",
-                      topic, message);
+        if (commandInHoldoff(millis(), subscribedAtMs, MQTT_COMMAND_HOLDOFF_MS))
+        {
+            Serial.printf("[MQTT] Dropped command inside %lu ms post-subscribe hold-off "
+                          "(possible retained message)\n",
+                          (unsigned long)MQTT_COMMAND_HOLDOFF_MS);
+            return;
+        }
 
+        CliCommand command{
+            parsed.type == RemoteCommandType::RESET
+                ? CommandType::REMOTE_RESET
+                : CommandType::REMOTE_ACK};
+
+        Serial.printf("[MQTT] Command accepted: %s\n", topic);
+
+        // A dropped command is harmless: reset/ack are idempotent requests
+        // that the operator can resend, and the protection interlock does
+        // not depend on them.
         if (commandQueue == nullptr ||
             xQueueSend(commandQueue, &command, 0) != pdPASS)
         {
-            Serial.println("[MQTT] Command queue full");
+            Serial.println("[MQTT] Command dropped: queue full");
         }
     }
 
@@ -126,6 +132,7 @@ bool mqttManagerConnect()
         Serial.println("[MQTT] Failed to publish online status");
     }
 
+    subscribedAtMs = millis();
     const bool resetSubscribed = mqttClient.subscribe(MQTT_TOPIC_CMD_RESET);
     const bool ackSubscribed = mqttClient.subscribe(MQTT_TOPIC_CMD_ACK);
 
@@ -154,57 +161,28 @@ bool mqttManagerIsConnected()
 bool mqttManagerPublishTelemetry(
     const Measurement& m,
     const ProtectionSnapshot& p,
-    bool relayOn
+    bool relayCommandedOn,
+    bool relayOutputEnabled
 )
 {
     if (!mqttClient.connected())
         return false;
 
-    char payload[768]{};
+    TelemetryInput input{};
+    input.deviceId = MQTT_DEVICE_ID;
+    input.firmwareVersion = FIRMWARE_VERSION;
+    input.measurement = m;
+    input.protection = p;
+    input.uptimeMs = millis();
+    input.measurementAgeMs = static_cast<uint32_t>(input.uptimeMs - m.timestamp);
+    input.relayCommandedOn = relayCommandedOn;
+    input.relayOutputEnabled = relayOutputEnabled;
 
-    const int written = snprintf(
-        payload,
-        sizeof(payload),
-        "{"
-        "\"device_id\":\"%s\","
-        "\"firmware_version\":\"%s\","
-        "\"voltage\":%.2f,"
-        "\"current\":%.3f,"
-        "\"power\":%.2f,"
-        "\"energy\":%.3f,"
-        "\"apparent_power\":%.2f,"
-        "\"power_factor\":%.3f,"
-        "\"valid\":%s,"
-        "\"state\":\"%s\","
-        "\"fault\":\"%s\","
-        "\"fault_active\":%s,"
-        "\"fault_acknowledged\":%s,"
-        "\"relay_on\":%s,"
-        "\"source\":\"%s\","
-        "\"uptime_ms\":%lu"
-        "}",
-        MQTT_DEVICE_ID,
-        FIRMWARE_VERSION,
-        m.voltage,
-        m.current,
-        m.power,
-        m.energy,
-        m.apparentPower,
-        m.powerFactor,
-        m.valid ? "true" : "false",
-        systemStateName(p.state),
-        faultCodeName(p.fault.activeFault),
-        p.fault.active ? "true" : "false",
-        p.fault.acknowledged ? "true" : "false",
-        relayOn ? "true" : "false",
-        measurementSourceName(),
-        (unsigned long)millis()
-    );
+    char payload[768];
 
-    if (written < 0 ||
-        static_cast<size_t>(written) >= sizeof(payload))
+    if (buildTelemetryJson(payload, sizeof(payload), input) < 0)
     {
-        Serial.println("[MQTT] Telemetry payload truncated");
+        Serial.println("[MQTT] Telemetry payload did not fit buffer");
         return false;
     }
 

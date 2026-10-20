@@ -16,6 +16,7 @@ enum HeartbeatId : uint8_t
 
 bool watchdogManagerBegin();
 bool watchdogManagerRegisterCurrentTask(const char* taskName);
+uint8_t watchdogManagerRegistrationFailures();
 void watchdogManagerHeartbeat(HeartbeatId id);
 uint32_t watchdogManagerHeartbeatAge(HeartbeatId id);
 const char* watchdogManagerHeartbeatName(HeartbeatId id);
