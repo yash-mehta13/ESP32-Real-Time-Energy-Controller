@@ -1,202 +1,114 @@
 # Test Procedure
 
-## 1. Static repository checks
+Evidence levels used throughout this repository:
 
-Confirm:
+| Level | Meaning |
+|---|---|
+| **Inspected** | Confirmed by reading the code |
+| **Host-tested** | Automated test on a development machine (no ESP32, no mains) |
+| **Built** | Firmware compiled for the ESP32 target (CI) |
+| **Simulated on target** | Run on an ESP32 with `esp32dev_sim`, no load |
+| **Bench-tested** | Run on hardware with a real load. Requires a committed record |
 
-```text
-src/config.h
-```
+## 1. Prerequisites
 
-is ignored by Git.
+- `g++` (C++11) and `make` for host tests.
+- PlatformIO Core for firmware builds (`pip install platformio`).
+- `src/config.h` copied from `src/config.example.h`.
 
-```bash
-git check-ignore -v src/config.h
-git status --ignored
-```
-
-Never publish real credentials.
-
-## 2. Build test
-
-```bash
-pio run
-```
-
-Expected:
-
-```text
-SUCCESS
-```
-
-The build must complete without compiler warnings that indicate broken APIs or unsafe conversions.
-
-## 3. Simulation protection test
-
-Keep:
-
-```cpp
-MeasurementSource::SIMULATION
-```
-
-Expected sequence:
-
-```text
-NORMAL
-  -> WARNING
-  -> WARNING
-  -> FAULT
-```
-
-The 600 W phase should latch `OVERPOWER` after approximately 2 seconds above the threshold.
-
-Expected actuator behavior:
-
-```text
-NORMAL  -> Relay ON
-WARNING -> Relay ON
-FAULT   -> Relay OFF
-```
-
-## 4. Fault ACK
-
-Send:
-
-```text
-ack
-```
-
-Expected:
-
-```text
-Fault remains active
-Acknowledged = YES
-Relay remains OFF
-```
-
-## 5. Fault reset
-
-Send:
-
-```text
-reset
-```
-
-Expected:
-
-```text
-Fault cleared
-State = INIT
-Relay = OFF
-```
-
-After the next valid low-power measurement:
-
-```text
-State = NORMAL
-Relay = ON
-```
-
-## 6. MQTT command test
-
-Publish:
-
-```text
-reset
-```
-
-to:
-
-```text
-energy/device01/cmd/reset
-```
-
-Verify the serial log reports that the remote command was received and executed by ControlTask.
-
-Test ACK similarly:
-
-```text
-energy/device01/cmd/ack
-```
-
-## 7. TLS test
-
-Verify that the firmware connects with:
-
-```text
-setCACert(HIVEMQ_ROOT_CA)
-```
-
-and contains no `setInsecure()` call.
-
-The system clock must be synchronized before MQTT connects.
-
-## 8. Wi-Fi recovery
-
-Disconnect the access point or temporarily make the network unavailable.
-
-Verify:
-
-- SensorTask continues.
-- ControlTask continues.
-- Protection continues.
-- Relay behavior remains locally controlled.
-- NetworkTask retries connection.
-- MQTT reconnects after Wi-Fi returns.
-
-## 9. MQTT recovery
-
-Stop MQTT connectivity while keeping Wi-Fi active.
-
-Verify:
-
-- Protection continues.
-- Telemetry resumes after reconnection.
-- State/fault are republished after a fresh MQTT connection.
-
-## 10. Watchdog test
-
-For a controlled development test only, intentionally prevent a task from updating its heartbeat.
-
-Expected:
-
-```text
-WATCHDOG FAILURE
-        |
-        v
-system restart
-```
-
-Do not perform this test while controlling a dangerous or unattended electrical load.
-
-## 11. Real PZEM test
-
-After verifying the complete simulation path:
-
-1. Power down.
-2. Verify PZEM wiring.
-3. Change the source to `PZEM`.
-4. Build and upload.
-5. Start with a known safe load.
-6. Compare readings with a trusted meter.
-7. Verify invalid/no-PZEM behavior.
-8. Verify protection thresholds.
-
-## 12. Final GitHub security check
-
-Before making the repository public:
+## 2. Host unit tests (host-tested)
 
 ```bash
-git grep -n "YOUR_WIFI"
-git grep -n "YOUR_MQTT"
-git grep -n "BLYNK_AUTH"
+make test
 ```
 
-Also inspect:
+Compiles `lib/energy_core` and `test/native` with `-Wall -Wextra -Werror
+-pedantic` and runs them. Output ends with
+`N tests, 0 failed (host build, simulated/mocked inputs only)`. Covered:
+threshold boundaries and timing (including `millis()` rollover), measurement
+validity, latch/ack/reset/interlock, fail-closed lock-failure result, output
+mapping per state and polarity, simulation never driving the relay pin, MQTT
+command parsing, topic/ID derivation, telemetry JSON and heartbeat logic.
+
+Not covered by host tests: real PZEM communication, GPIO, FreeRTOS scheduling,
+the ESP-IDF watchdog, Wi-Fi/TLS/Blynk, the LCD.
+
+## 3. Firmware builds (built)
 
 ```bash
-git status
-git log --all --oneline
+cp src/config.example.h src/config.h      # placeholders only
+pio run -e esp32dev_sim
+pio run -e esp32dev_pzem
 ```
 
-If credentials were previously committed to Git history, rotating them is necessary; removing them only from the latest working tree is not sufficient.
+Both must succeed. Record `pio pkg list -e <env>` output with any reported
+result so toolchain versions are known.
+
+## 4. Simulation on target (no load connected)
+
+Flash `esp32dev_sim`. Open the monitor (`pio device monitor`).
+
+1. Boot banner shows `Measurement source: SIMULATION | Relay GPIO output: DISABLED`.
+2. LCD shows `S` in the last column.
+3. Over 15 s: NORMAL (40 W) -> WARNING (500 W) -> FAULT `OVERPOWER` ~2 s into
+   the 600 W phase.
+4. `status` shows `Relay (commanded): OFF` after FAULT and
+   `Relay GPIO output: DISABLED`. With a multimeter on the relay input pin the
+   level must never reach the relay's ON level in any phase (optional check).
+5. `ack`: fault stays, `Fault ACK: YES`.
+6. `reset` while the profile is in its 600 W phase: `REJECTED_UNSAFE_CONDITION`.
+   `reset` during the 40 W phase: `ACCEPTED`, state INIT; next sample NORMAL.
+7. Publish `reset` / `ack` to the command topics (use a client with your
+   credentials) and observe the same outcomes in the serial log.
+
+## 5. Network resilience (simulated on target)
+
+Disconnect the access point: SensorTask/ControlTask/protection keep running,
+state still changes, NetworkTask retries. Restore: MQTT reconnects, state and
+fault are republished. Block only MQTT: protection continues; telemetry resumes.
+
+## 6. Watchdog (development only, never with a live load)
+
+Temporarily stall a task in a scratch build. Expect the `WATCHDOG FAILURE`
+banner, the safe output driven, then a restart. This path is **not covered by
+automated tests** (needs the target).
+
+## 7. Bench validation with a real PZEM and relay
+
+Only by a person qualified for the electrical work involved, after reading
+docs/safety-and-limitations.md and docs/hardware-and-wiring.md. Use a
+current-limited or fused supply, an enclosure and a non-hazardous test load
+(for example a resistive lamp) first.
+
+Create a record under `docs/validation/` (one file per session) with:
+
+- date, firmware commit (`git rev-parse HEAD`), environment, toolchain list;
+- wiring/photo reference, relay module model, **verified relay polarity**;
+- reference meter model and calibration status, load description, ambient
+  conditions;
+- table of reference reading versus PZEM reading and the error;
+- for each protection step: the commanded input, the observed serial log,
+  and a measurement showing the load actually de-energised (for example
+  reference meter reading 0 W);
+- PZEM unplugged behaviour (expect `SENSOR_INVALID` fault, relay OFF);
+- boot behaviour: relay stays OFF from power-on until the first valid sample
+  (observe with the load connected only through a safe test arrangement).
+
+A claim of hardware validation is only treated as reproducible evidence when
+such a record is committed.
+
+## 8. Repository checks
+
+```bash
+python3 scripts/check_docs.py     # relative links / image paths
+python3 scripts/scan_secrets.py   # non-placeholder credentials, key blocks
+git check-ignore -v src/config.h  # config.h must be ignored
+```
+
+If credentials were ever committed, rotate them; removing them from the latest
+tree is not sufficient.
+
+## 9. Results recorded for this revision
+
+See `CHANGELOG.md` and docs/release-checklist.md for the commands run in the
+last audit and their outcomes.

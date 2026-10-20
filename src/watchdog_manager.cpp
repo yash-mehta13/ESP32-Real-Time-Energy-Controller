@@ -2,11 +2,20 @@
 
 #include <esp_task_wdt.h>
 
+// esp_task_wdt_config_t / esp_task_wdt_init(const config*) is the ESP-IDF 5
+// API shipped with arduino-esp32 3.x. Older cores use a different signature.
+#if !defined(ESP_ARDUINO_VERSION_MAJOR) || ESP_ARDUINO_VERSION_MAJOR < 3
+#error "watchdog_manager.cpp requires arduino-esp32 3.x (ESP-IDF 5 task watchdog API)"
+#endif
+
 #include "config.h"
+#include "heartbeat_monitor.h"
 
 namespace
 {
-    volatile uint32_t heartbeatTimestamp[HEARTBEAT_COUNT] = {0};
+    // Application-level heartbeat table (pure logic in lib/energy_core).
+    HeartbeatMonitor monitor(HEARTBEAT_COUNT);
+    uint8_t registrationFailures = 0;
 
     const char* heartbeatNames[HEARTBEAT_COUNT] =
     {
@@ -51,15 +60,28 @@ bool watchdogManagerRegisterCurrentTask(const char* taskName)
 {
     const esp_err_t result = esp_task_wdt_add(nullptr);
 
-    if (result == ESP_OK || result == ESP_ERR_INVALID_ARG || result == ESP_ERR_INVALID_STATE)
+    // ESP_ERR_INVALID_STATE means "already subscribed", which is fine.
+    // Anything else (including ESP_ERR_INVALID_ARG / NO_MEM) means this
+    // task is NOT covered by the task watchdog, so it is counted and shown
+    // by the 'watchdog' CLI command instead of being reported as success.
+    if (result == ESP_OK || result == ESP_ERR_INVALID_STATE)
     {
         Serial.printf("[WATCHDOG] Registered: %s\n", taskName);
         return true;
     }
 
-    Serial.printf("[WATCHDOG] Registration failed: %s (%d)\n",
+    portENTER_CRITICAL(&heartbeatMux);
+    ++registrationFailures;
+    portEXIT_CRITICAL(&heartbeatMux);
+
+    Serial.printf("[WATCHDOG] Registration FAILED: %s (%d) - not covered by TWDT\n",
                   taskName, static_cast<int>(result));
     return false;
+}
+
+uint8_t watchdogManagerRegistrationFailures()
+{
+    return registrationFailures;
 }
 
 void watchdogManagerHeartbeat(HeartbeatId id)
@@ -67,8 +89,10 @@ void watchdogManagerHeartbeat(HeartbeatId id)
     if (id >= HEARTBEAT_COUNT)
         return;
 
+    const uint32_t now = millis();
+
     portENTER_CRITICAL(&heartbeatMux);
-    heartbeatTimestamp[id] = millis();
+    monitor.beat(id, now);
     portEXIT_CRITICAL(&heartbeatMux);
 }
 
@@ -77,16 +101,13 @@ uint32_t watchdogManagerHeartbeatAge(HeartbeatId id)
     if (id >= HEARTBEAT_COUNT)
         return UINT32_MAX;
 
-    uint32_t last = 0;
+    const uint32_t now = millis();
 
     portENTER_CRITICAL(&heartbeatMux);
-    last = heartbeatTimestamp[id];
+    const uint32_t age = monitor.ageMs(id, now);
     portEXIT_CRITICAL(&heartbeatMux);
 
-    if (last == 0)
-        return UINT32_MAX;
-
-    return millis() - last;
+    return age;
 }
 
 const char* watchdogManagerHeartbeatName(HeartbeatId id)
@@ -96,16 +117,13 @@ const char* watchdogManagerHeartbeatName(HeartbeatId id)
 
 bool watchdogManagerHealthy(uint32_t timeoutMs)
 {
-    for (uint8_t i = 0; i < HEARTBEAT_COUNT; ++i)
-    {
-        if (watchdogManagerHeartbeatAge(
-                static_cast<HeartbeatId>(i)) > timeoutMs)
-        {
-            return false;
-        }
-    }
+    const uint32_t now = millis();
 
-    return true;
+    portENTER_CRITICAL(&heartbeatMux);
+    const bool healthy = monitor.firstStale(now, timeoutMs) == static_cast<size_t>(-1);
+    portEXIT_CRITICAL(&heartbeatMux);
+
+    return healthy;
 }
 
 void watchdogManagerPrintStatus(uint32_t timeoutMs)

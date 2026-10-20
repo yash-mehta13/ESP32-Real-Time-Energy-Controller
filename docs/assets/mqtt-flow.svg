@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 560" width="1180" height="560" font-family="Helvetica, Arial, DejaVu Sans, sans-serif" role="img" aria-labelledby="t d"><title id="t">MQTT message flow and topics</title><desc id="d">Device publishes telemetry, state, fault and availability topics to HiveMQ Cloud over TLS and subscribes to two narrow command topics handled through a bounded queue.</desc><defs><marker id="ah4b5563" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4b5563"/></marker><marker id="ah374151" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker><marker id="ah15803d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker><marker id="ah6d28d9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/></marker><marker id="ahc2410c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/></marker><marker id="ahb91c1c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/></marker><marker id="ah1d4ed8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker></defs><rect width="1180" height="560" fill="#ffffff"/><text x="24" y="36" font-size="20" font-weight="bold" text-anchor="start" fill="#111827" >MQTT message flow and topic hierarchy</text>
+<text x="24" y="58" font-size="12.5" font-weight="normal" text-anchor="start" fill="#4b5563" >Topics are derived from MQTT_DEVICE_ID (default "device01") in lib/energy_core/src/energy_topics.h.</text>
+<rect x="24" y="110" width="250" height="160" rx="8" fill="#ffedd5" stroke="#c2410c" stroke-width="2"/>
+<text x="149.0" y="156.0" font-size="15" font-weight="bold" text-anchor="middle" fill="#111827" >ESP32 device</text>
+<text x="149.0" y="174.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >NetworkTask</text>
+<text x="149.0" y="192.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >TLS, CA verified (ISRG Root X1)</text>
+<text x="149.0" y="210.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >NTP synced before connect</text>
+<text x="149.0" y="228.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >LWT: availability = offline</text>
+<rect x="450" y="110" width="220" height="160" rx="8" fill="#ffedd5" stroke="#c2410c" stroke-width="2"/>
+<text x="560.0" y="156.0" font-size="15" font-weight="bold" text-anchor="middle" fill="#111827" >HiveMQ Cloud broker</text>
+<text x="560.0" y="174.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >port 8883</text>
+<text x="560.0" y="192.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >username/password auth</text>
+<text x="560.0" y="210.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >ACL: energy/device01/#</text>
+<text x="560.0" y="228.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >only (per-device account)</text>
+<rect x="870" y="110" width="286" height="160" rx="8" fill="#f3f4f6" stroke="#4b5563" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="1013.0" y="156.0" font-size="15" font-weight="bold" text-anchor="middle" fill="#111827" >Operator / dashboard</text>
+<text x="1013.0" y="174.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >any MQTT client with the</text>
+<text x="1013.0" y="192.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >right broker credentials</text>
+<text x="1013.0" y="210.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >subscribes to telemetry,</text>
+<text x="1013.0" y="228.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >publishes reset / ack</text>
+<polyline points="274,150 450,150" fill="none" stroke="#c2410c" stroke-width="2" marker-end="url(#ahc2410c)"/>
+<text x="362" y="142" font-size="11.5" font-weight="normal" text-anchor="middle" fill="#c2410c" >publish telemetry, state, fault</text>
+<polyline points="450,240 274,240" fill="none" stroke="#c2410c" stroke-width="2" marker-end="url(#ahc2410c)"/>
+<text x="362" y="232" font-size="11.5" font-weight="normal" text-anchor="middle" fill="#c2410c" >command (subscribe)</text>
+<polyline points="670,150 870,150" fill="none" stroke="#c2410c" stroke-width="2" marker-end="url(#ahc2410c)"/>
+<polyline points="870,240 670,240" fill="none" stroke="#c2410c" stroke-width="2" marker-end="url(#ahc2410c)"/>
+<rect x="24" y="310" width="250" height="70" rx="8" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+<text x="149.0" y="329.0" font-size="13.5" font-weight="bold" text-anchor="middle" fill="#111827" >Callback</text>
+<text x="149.0" y="347.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >exact topic + payload, &lt;= 16 B</text>
+<text x="149.0" y="365.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >2 s hold-off after subscribe</text>
+<rect x="300" y="310" width="170" height="70" rx="4" fill="#ffffff" stroke="#374151" stroke-width="2"/>
+<text x="385.0" y="338.0" font-size="13" font-weight="bold" text-anchor="middle" fill="#111827" >commandQueue</text>
+<text x="385.0" y="356.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >8 entries, no wait</text>
+<rect x="496" y="310" width="250" height="70" rx="8" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+<text x="621.0" y="338.0" font-size="13.5" font-weight="bold" text-anchor="middle" fill="#111827" >ControlTask</text>
+<text x="621.0" y="356.0" font-size="12" font-weight="normal" text-anchor="middle" fill="#374151" >ProtectionCore interlock</text>
+<polyline points="274,345 300,345" fill="none" stroke="#1d4ed8" stroke-width="2" marker-end="url(#ah1d4ed8)"/>
+<polyline points="470,345 496,345" fill="none" stroke="#1d4ed8" stroke-width="2" marker-end="url(#ah1d4ed8)"/>
+<text x="770" y="332" font-size="12" font-weight="normal" text-anchor="start" fill="#b91c1c" >A reset is a request. It is refused unless a</text>
+<text x="770" y="350" font-size="12" font-weight="normal" text-anchor="start" fill="#b91c1c" >fresh valid sample shows the cause is gone.</text>
+<text x="24" y="424" font-size="14" font-weight="bold" text-anchor="start" fill="#111827" >Topic hierarchy (device01)</text>
+<text x="36" y="442" font-size="11.5" font-weight="normal" text-anchor="start" fill="#111827" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace" xml:space="preserve">energy/device01/</text>
+<text x="60" y="458" font-size="11.5" font-weight="normal" text-anchor="start" fill="#111827" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace" xml:space="preserve">telemetry                 JSON v2, every 2 s, not retained</text>
+<text x="60" y="474" font-size="11.5" font-weight="normal" text-anchor="start" fill="#111827" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace" xml:space="preserve">status/state              INIT|NORMAL|WARNING|FAULT, retained</text>
+<text x="60" y="490" font-size="11.5" font-weight="normal" text-anchor="start" fill="#111827" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace" xml:space="preserve">status/availability       online | offline (LWT), retained</text>
+<text x="60" y="506" font-size="11.5" font-weight="normal" text-anchor="start" fill="#111827" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace" xml:space="preserve">fault/code                NONE|SENSOR_INVALID|OVERPOWER|SENSOR_STALE|PROTECTION_INTERNAL, retained</text>
+<text x="60" y="522" font-size="11.5" font-weight="normal" text-anchor="start" fill="#111827" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace" xml:space="preserve">cmd/reset                 payload "reset"  (subscribed)</text>
+<text x="60" y="538" font-size="11.5" font-weight="normal" text-anchor="start" fill="#111827" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace" xml:space="preserve">cmd/ack                   payload "ack"    (subscribed)</text>
+<text x="1156" y="550" font-size="11" font-weight="normal" text-anchor="end" fill="#6b7280" >Conceptual diagram derived from the source.</text></svg>

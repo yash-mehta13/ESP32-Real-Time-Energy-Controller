@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or goal
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Include effects on protection behaviour, relay safety and simulation isolation.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How would this be tested?
+      description: Host test, simulation on target, or bench test with a record.
+  - type: markdown
+    attributes:
+      value: Do not include credentials or tokens.

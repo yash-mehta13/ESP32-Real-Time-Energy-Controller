@@ -1,108 +1,110 @@
 # Fault Management
 
-## States
+![Protection state machine](assets/state-machine.svg)
 
-```text
-INIT
-  |
-  v
-NORMAL <----> WARNING
-  |             |
-  |             |
-  +-------------+
-        |
-        v
-      FAULT
+Implemented in `lib/energy_core/src/protection_core.cpp` (`ProtectionCore`) and
+exercised by `test/native/test_protection.cpp`. The thresholds are **project
+configuration values** (`src/config.example.h`), not validated safety ratings:
+they must be matched to the real load, relay, wiring and test conditions.
+
+```mermaid
+stateDiagram-v2
+  [*] --> INIT: boot (relay OFF)
+  INIT --> NORMAL: fresh valid, V>10, P<=485
+  INIT --> WARNING: fresh valid, 485<P<=550
+  NORMAL --> WARNING: P>485
+  WARNING --> NORMAL: P<=485
+  NORMAL --> INIT: V<=10 (no mains)
+  WARNING --> INIT: V<=10 (no mains)
+  INIT --> FAULT: invalid / stale / P>550 on first sample
+  NORMAL --> FAULT: invalid / stale / internal / P>550 for 2 s
+  WARNING --> FAULT: invalid / stale / internal / P>550 for 2 s
+  FAULT --> INIT: reset accepted (fresh, valid, P<=550)
+  FAULT --> FAULT: ack (flag only) / reset rejected
 ```
 
-`FAULT` is latched.
+## 1. Policy table
 
-## Fault codes
-
-| Code | Meaning | Relay |
+| Condition | State | Relay command |
 |---|---|---|
-| `NONE` | No active fault | State dependent |
-| `SENSOR_INVALID` | Measurement contains invalid data | OFF |
-| `OVERPOWER` | Power remained above fault threshold | OFF |
+| Boot, no mains (V <= 10 V), after an accepted reset until a fresh sample | INIT | OFF |
+| P <= 485 W | NORMAL | ON |
+| 485 W < P <= 550 W | WARNING | ON |
+| P > 550 W for < 2000 ms | WARNING (timer running) | ON |
+| P > 550 W continuously for >= 2000 ms | FAULT / `OVERPOWER` | OFF |
+| Sample flagged invalid | FAULT / `SENSOR_INVALID` | OFF |
+| Sample older than 3000 ms, or no sample for > 3000 ms | FAULT / `SENSOR_STALE` | OFF |
+| Protection state could not be locked | FAULT / `PROTECTION_INTERNAL` | OFF |
+| Any state value outside the table | - | OFF |
 
-## Thresholds
+Comparison operators are strict: exactly 485 W is NORMAL, exactly 550 W is
+WARNING and never starts the timer. The fault confirms on the first sample at
+which `now - timerStart >= 2000 ms`; with a 1 s sample period that is the
+third sample. The relay stays ON during confirmation (that is the documented
+WARNING behaviour). All timing uses unsigned subtraction, so it is correct
+across the 32-bit `millis()` wrap (tested).
 
-```text
-Warning threshold = 485 W
-Fault threshold   = 550 W
-Confirmation      = 2000 ms
-```
+## 2. Latching
 
-## Overpower behavior
+A fault is latched. Later good samples, ACK or any network event never clear
+it. The first cause is preserved: a second, different cause while latched does
+not overwrite `activeFault` or increase `totalFaults`.
 
-A single sample above 550 W does not immediately latch the fault.
+## 3. Acknowledge is not reset
 
-Instead:
+| Command | Effect |
+|---|---|
+| `ack` (CLI) / `cmd/ack` (MQTT) | Sets `acknowledged`. State, fault and relay are unchanged. Ignored when no fault is active. |
+| `reset` (CLI) / `cmd/reset` (MQTT) | A *request*. Evaluated by the interlock below. |
 
-```text
-Power > 550 W
-     |
-     v
-Start timer
-     |
-     +---- drops below threshold --> cancel timer
-     |
-     +---- remains above threshold for 2 s
-                         |
-                         v
-                     OVERPOWER
-                         |
-                         v
-                       FAULT
-                         |
-                         v
-                      Relay OFF
-```
+## 4. Reset interlock
 
-## Sensor failure
+`requestReset()` returns one of:
 
-An invalid measurement immediately produces:
+| Result | Meaning |
+|---|---|
+| `ACCEPTED` | Fault cleared, state INIT (relay OFF) |
+| `REJECTED_NO_ACTIVE_FAULT` | nothing to reset |
+| `REJECTED_NO_MEASUREMENT` | no sample seen since boot |
+| `REJECTED_STALE_MEASUREMENT` | newest sample older than 3000 ms |
+| `REJECTED_INVALID_MEASUREMENT` | newest sample invalid |
+| `REJECTED_UNSAFE_CONDITION` | newest sample still above the fault threshold |
+| `REJECTED_BUSY` | protection state could not be locked |
 
-```text
-SENSOR_INVALID -> FAULT -> Relay OFF
-```
+After an accepted reset the core is **re-armed**: samples taken before the
+reset are ignored (state stays INIT, relay OFF) and the first fresh sample
+may not open a confirmation window - if it is above the fault threshold the
+fault re-latches immediately. The load is therefore never energised for a 2 s
+window just because a reset was issued. The same first-sample rule applies
+after boot and after mains returns (V <= 10 V).
+The last result is exposed as `last_reset_result` in telemetry and in the
+`status` CLI output.
 
-## Acknowledgement
+Local `reset`, remote reset and `ack` all go through ControlTask and the same
+core; the transport cannot bypass the interlock.
 
-ACK is an operator acknowledgement.
+### Limits of the interlock
 
-It does **not** clear the fault.
+- If the PZEM measures the load **downstream of the relay**, an open relay
+  reads ~0 W, so the interlock cannot prove an overload has been removed. The
+  operator must remove the cause first; if it persists, the next closure
+  trips again after the confirmation window (reset itself does not close the
+  relay; the first good sample does).
+- The fault latch is in RAM. A reset of the ESP32 (including a
+  watchdog restart) clears it. The immediate re-latch rule limits the effect
+  but the relay's state during the reset itself is a hardware matter.
 
-```text
-FAULT
-  |
-  +---- ACK ----> FAULT + acknowledged=true
-```
+## 5. Undervoltage / no mains
 
-## Reset
+Voltage at or below `MIN_OPERATING_VOLTAGE_V` (10 V) is treated as "no mains
+detected": state INIT, relay OFF, no latched fault. There is no brown-out
+(undervoltage) fault between 10 V and the meter's range; none is specified.
 
-Reset clears the active fault and returns the system to `INIT`.
+## 6. Safe-state consistency
 
-The next valid measurement determines whether the system becomes NORMAL or WARNING.
-
-```text
-FAULT
-  |
- RESET
-  v
-INIT
-  |
- next measurement
-  v
-NORMAL / WARNING / FAULT
-```
-
-## Fail-safe principle
-
-Any state outside the explicitly allowed operating states results in the actuator's safe behavior:
-
-```text
-Relay OFF
-```
-
-The relay is also initialized OFF during boot.
+- `actuatorApplyResult()` is called on every protection result, not only on
+  change flags.
+- `outputsForResult()` returns the FAULT outputs when `synchronizationFailed`.
+- The relay is OFF in INIT, FAULT, and any unknown state value.
+- The firmware reports a *commanded* relay state only. There is no contact
+  feedback, so an open contact is not proven.

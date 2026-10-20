@@ -12,10 +12,12 @@ bool mqttManagerConnect();
 void mqttManagerLoop();
 bool mqttManagerIsConnected();
 
+// relayCommandedOn is the firmware's command, not a contact reading.
 bool mqttManagerPublishTelemetry(
     const Measurement& measurement,
     const ProtectionSnapshot& protection,
-    bool relayOn
+    bool relayCommandedOn,
+    bool relayOutputEnabled
 );
 bool mqttManagerPublishState(SystemState state);
 bool mqttManagerPublishFault(const ProtectionSnapshot& protection);

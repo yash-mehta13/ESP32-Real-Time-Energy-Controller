@@ -3,6 +3,7 @@
 #include <esp_system.h>
 
 #include "actuator.h"
+#include "build_mode.h"
 #include "config.h"
 #include "watchdog_manager.h"
 
@@ -64,8 +65,10 @@ void diagnosticsPrintMeasurement(const Measurement& m)
 {
     Serial.println();
     Serial.println("=========== MEASUREMENT ================");
-    Serial.printf("Source           : %s\n", measurementSourceName());
-    Serial.printf("Validity         : %s\n", m.valid ? "VALID" : "INVALID");
+    Serial.printf("Source           : %s\n", measurementSourceName(activeMeasurementSource()));
+    Serial.printf("Sample source    : %s\n", measurementSourceName(m.source));
+    Serial.printf("Validity         : %s (%s)\n", m.valid ? "VALID" : "INVALID",
+                  measurementStatusName(m.status));
     Serial.printf("Voltage          : %.2f V\n", m.voltage);
     Serial.printf("Current          : %.3f A\n", m.current);
     Serial.printf("Power            : %.2f W\n", m.power);
@@ -138,13 +141,21 @@ void diagnosticsPrintStatus(
                   protection.fault.active ? "YES" : "NO");
     Serial.printf("Fault ACK        : %s\n",
                   protection.fault.acknowledged ? "YES" : "NO");
-    Serial.printf("Relay            : %s\n",
-                  actuatorRelayIsOn() ? "ON" : "OFF");
+    Serial.printf("Relay (commanded): %s\n",
+                  actuatorRelayCommandedOn() ? "ON" : "OFF");
+    Serial.printf("Relay GPIO output: %s\n",
+                  actuatorRelayOutputEnabled()
+                      ? "ENABLED (hardware build)"
+                      : "DISABLED (simulation build, pin held OFF)");
+    Serial.printf("GPIO readback err: %lu\n",
+                  (unsigned long)actuatorReadbackMismatches());
+    Serial.printf("Last reset result: %s\n",
+                  resetResultName(protection.lastResetResult));
     Serial.printf("Power            : %.2f W\n", measurement.power);
     Serial.printf("Measurement      : %s\n",
                   measurement.valid ? "VALID" : "INVALID");
     Serial.printf("Source           : %s\n",
-                  measurementSourceName());
+                  measurementSourceName(activeMeasurementSource()));
     Serial.println("========================================");
 
     diagnosticsPrintNetwork(network);
@@ -169,8 +180,12 @@ void diagnosticsPrintVersion()
     Serial.printf("Firmware         : %s\n", FIRMWARE_NAME);
     Serial.printf("Version          : %s\n", FIRMWARE_VERSION);
     Serial.printf("Build            : %s\n", FIRMWARE_BUILD);
-    Serial.printf("Source           : %s\n", measurementSourceName());
-    Serial.printf("CPU              : %u MHz\n", getCpuFrequencyMhz());
+    Serial.printf("Source           : %s\n",
+                  measurementSourceName(activeMeasurementSource()));
+    Serial.printf("Relay output     : %s\n",
+                  actuatorRelayOutputEnabled() ? "ENABLED" : "DISABLED (simulation)");
+    Serial.printf("CPU              : %lu MHz\n",
+                  static_cast<unsigned long>(getCpuFrequencyMhz()));
     Serial.printf("Free Heap        : %lu bytes\n",
                   (unsigned long)ESP.getFreeHeap());
     Serial.printf("Minimum Free Heap: %lu bytes\n",
@@ -213,6 +228,8 @@ void diagnosticsPrintWatchdog()
                   (unsigned long)WATCHDOG_TIMEOUT_MS);
     Serial.printf("Heartbeat Limit  : %lu ms\n",
                   (unsigned long)HEARTBEAT_TIMEOUT_MS);
+    Serial.printf("TWDT reg. failed : %u\n",
+                  (unsigned)watchdogManagerRegistrationFailures());
 
     for (uint8_t i = 0; i < HEARTBEAT_COUNT; ++i)
     {

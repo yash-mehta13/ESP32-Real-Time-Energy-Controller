@@ -1,0 +1,6 @@
+{
+  "name": "energy_core",
+  "version": "1.3.0",
+  "description": "Hardware-independent decision logic for the ESP32 Real-Time Energy Controller (protection, measurement validation, command parsing, telemetry, heartbeats). No Arduino/FreeRTOS dependency so it can be unit-tested on a host machine.",
+  "build": { "flags": "-std=gnu++11" }
+}

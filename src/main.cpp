@@ -14,7 +14,10 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 
+#include <atomic>
+
 #include "actuator.h"
+#include "build_mode.h"
 #include "diagnostics.h"
 #include "measurement.h"
 #include "mqtt_manager.h"
@@ -42,9 +45,10 @@ namespace
     TaskHandle_t watchdogTaskHandle = nullptr;
     TaskHandle_t cliTaskHandle = nullptr;
 
-    bool wifiConnected = false;
-    bool blynkConnected = false;
-    bool timeSynchronized = false;
+    // Written by NetworkTask, read by CliTask: atomics avoid torn/unsynchronised access.
+    std::atomic<bool> wifiConnected{false};
+    std::atomic<bool> blynkConnected{false};
+    std::atomic<bool> timeSynchronized{false};
 
     uint32_t lastWiFiAttempt = 0;
     uint32_t lastBlynkAttempt = 0;
@@ -105,12 +109,20 @@ namespace
         }
     }
 
+    // Outputs are re-applied on EVERY result (idempotent) rather than only on
+    // a change flag, so a missing flag can never leave the relay in a stale
+    // state. A synchronization failure is reported and drives the safe output.
     void applyProtectionResult(const ProtectionResult& result)
     {
+        actuatorApplyResult(result);
+
+        if (result.synchronizationFailed)
+        {
+            Serial.println("[SYSTEM] Protection lock failure -> safe output (relay OFF)");
+        }
+
         if (result.stateChanged || result.faultChanged)
         {
-            actuatorApplyState(result.state);
-
             Serial.printf(
                 "[SYSTEM] State=%s | Fault=%s\n",
                 systemStateName(result.state),
@@ -173,16 +185,17 @@ namespace
         {
             Measurement measurement{};
 
-            if (xQueueReceive(
+            // With no new sample the tick still runs, so sensor silence is
+            // detected (SENSOR_STALE) instead of the last state persisting.
+            const ProtectionResult result =
+                xQueueReceive(
                     measurementQueue,
                     &measurement,
-                    pdMS_TO_TICKS(CONTROL_PERIOD_MS)) == pdPASS)
-            {
-                const ProtectionResult result =
-                    protectionUpdate(measurement);
+                    pdMS_TO_TICKS(CONTROL_PERIOD_MS)) == pdPASS
+                    ? protectionUpdate(measurement)
+                    : protectionTick();
 
-                applyProtectionResult(result);
-            }
+            applyProtectionResult(result);
 
             CliCommand command{};
 
@@ -195,7 +208,11 @@ namespace
                         if (command.type == CommandType::REMOTE_RESET)
                             Serial.println("[MQTT] Remote reset command executing");
 
-                        if (protectionReset())
+                        // Reset is only a request: the protection core
+                        // refuses it unless fresh, valid data shows the
+                        // fault condition is gone. Accepted -> INIT (relay
+                        // OFF); the relay closes only after a later good sample.
+                        if (protectionReset() == ResetResult::ACCEPTED)
                             actuatorApplyState(SystemState::INIT);
                         break;
 
@@ -237,6 +254,13 @@ namespace
                 protectionGetSnapshot();
 
             lcd.clear();
+
+            // Column 15 marks simulated data on the LCD.
+            if (activeMeasurementSource() == MeasurementSource::SIMULATION)
+            {
+                lcd.setCursor(15, 0);
+                lcd.print("S");
+            }
 
             if (!measurement.valid)
             {
@@ -436,7 +460,8 @@ namespace
                         mqttManagerPublishTelemetry(
                             measurement,
                             protection,
-                            actuatorRelayIsOn()
+                            actuatorRelayCommandedOn(),
+                            actuatorRelayOutputEnabled()
                         );
                     }
                 }
@@ -475,6 +500,12 @@ namespace
                     Serial.println("========================================");
 
                     watchdogManagerPrintStatus(HEARTBEAT_TIMEOUT_MS);
+
+                    // Drive the safe output before restarting. After the
+                    // restart the GPIO floats until actuatorBegin(); an
+                    // external pull to the relay OFF level is required
+                    // (docs/hardware-and-wiring.md).
+                    actuatorApplyState(SystemState::FAULT);
 
                     Serial.println("[WATCHDOG] Restarting system...");
                     delay(100);
@@ -679,17 +710,22 @@ void setup()
     Serial.println(" ESP32 REAL-TIME ENERGY CONTROLLER");
     Serial.println(" ESP32 + FreeRTOS + MQTT + Blynk");
     Serial.printf(" Firmware %s | %s\n", FIRMWARE_VERSION, FIRMWARE_BUILD);
+    Serial.printf(" Measurement source: %s | Relay GPIO output: %s\n",
+                  measurementSourceName(kMeasurementSource),
+                  kRelayOutputMode == RelayOutputMode::FOLLOW_STATE
+                      ? "ENABLED" : "DISABLED (simulation)");
     Serial.println("==========================================");
 
-    measurementBegin();
+    // Safe state first: relay pin to OFF level before anything else runs.
     actuatorBegin();
     actuatorApplyState(SystemState::INIT);
+    measurementBegin();
     protectionBegin();
 
     lcd.init();
     lcd.backlight();
     lcd.setCursor(0, 0);
-    lcd.print("Energy Controller");
+    lcd.print("RT Energy Ctrl");  // 14 chars; the old 17-char text overran the 16x2 LCD
     lcd.setCursor(0, 1);
     lcd.print("Booting...");
 
